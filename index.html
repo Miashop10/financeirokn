@@ -55,6 +55,20 @@ header .marca{font-weight:600;letter-spacing:-.2px;font-size:15px}
 header .marca small{display:block;font-size:11px;opacity:.62;font-weight:400;letter-spacing:.02em}
 header .dir{margin-left:auto;display:flex;align-items:center;gap:10px}
 header .quem{font-size:12px;opacity:.8;text-align:right}
+.net{display:flex;align-items:center;gap:6px;font-size:11.5px;padding:5px 10px;border-radius:20px;background:rgba(255,255,255,.1);white-space:nowrap}
+.net i{width:8px;height:8px;border-radius:50%;background:#8b9895;flex:none}
+.net.on i{background:#5fd0a8}
+.net.salvando i{background:#f0c14b;animation:pulsa 1s ease-in-out infinite}
+.net.salvo i{background:#5fd0a8}
+.net.off i,.net.erro i{background:#ff8b7a}
+.net.off,.net.erro{background:rgba(255,120,100,.22)}
+@keyframes pulsa{0%,100%{opacity:1}50%{opacity:.3}}
+.conc{display:grid;grid-template-columns:minmax(240px,320px) 1fr;gap:20px;align-items:start}
+.conc .lado{border-right:1px solid var(--line2);padding-right:18px}
+.conc .lado .valor{font-family:'IBM Plex Mono',monospace;font-size:22px;font-weight:600;letter-spacing:-.5px;display:block;margin-bottom:4px}
+.conc .lado .acoes{display:flex;flex-direction:column;gap:6px;margin-top:12px}
+.conc .lado .acoes button{width:100%}
+@media(max-width:760px){.conc{grid-template-columns:1fr}.conc .lado{border-right:0;border-bottom:1px solid var(--line2);padding:0 0 14px}.conc .lado .acoes{flex-direction:row;flex-wrap:wrap}.conc .lado .acoes button{width:auto}}
 .icobtn{width:34px;height:34px;border-radius:var(--r);border:1px solid rgba(255,255,255,.22);background:transparent;color:#fff;display:grid;place-items:center;font-size:16px}
 .icobtn:hover{background:rgba(255,255,255,.13)}
 
@@ -169,6 +183,8 @@ table.dre tr.recuo td:first-child{padding-left:26px;color:var(--ink2)}
   nav button.on{border-left:0;border-bottom-color:var(--brand)}
   main{margin:0;padding:16px 13px 50px}
   header .quem{display:none}
+  .net span{display:none}
+  .net{padding:6px}
 }
 </style>
 </head>
@@ -190,6 +206,7 @@ table.dre tr.recuo td:first-child{padding-left:26px;color:var(--ink2)}
   <header>
     <div class="marca">Financeiro<small id="hdEscritorio">Escritório de advocacia</small></div>
     <div class="dir">
+      <div id="net" class="net" title="Situação da conexão com o Google"><i></i><span>Conectando…</span></div>
       <div class="quem"><b id="hdUser"></b><br><span id="hdPerfil"></span></div>
       <button class="icobtn" title="Atualizar dados" onclick="carregar(true)">↻</button>
       <button class="icobtn" title="Configurações" onclick="abrirConfig()">⚙</button>
@@ -270,20 +287,51 @@ function carregandoOn(msg){ $('#msgCarregando').textContent = msg || 'Carregando
 function carregandoOff(){ $('#carregando').classList.remove('on'); }
 const cfg = (k, pad) => { const r = (DB.CONFIG||[]).find(c => c.CHAVE === k); return r ? r.VALOR : (pad||''); };
 
+/* ── SITUAÇÃO DA CONEXÃO ── */
+const NET = { pendentes:0, ultimo:'', erro:'' };
+function pintarNet(){
+  const el = document.getElementById('net'); if (!el) return;
+  let cls = '', txt = '';
+  if (!navigator.onLine){ cls = 'off'; txt = 'Offline'; }
+  else if (NET.pendentes > 0){ cls = 'salvando'; txt = 'Salvando…'; }
+  else if (NET.erro){ cls = 'erro'; txt = 'Não salvo'; }
+  else if (NET.ultimo){ cls = 'salvo'; txt = 'Salvo ' + NET.ultimo; }
+  else { cls = 'on'; txt = 'Online'; }
+  el.className = 'net ' + cls;
+  el.innerHTML = '<i></i><span>' + esc(txt) + '</span>';
+  el.title = !navigator.onLine ? 'Sem internet. As alterações não estão indo para a nuvem.'
+    : NET.erro ? 'A última gravação falhou: ' + NET.erro
+    : NET.ultimo ? 'Última gravação na nuvem às ' + NET.ultimo : 'Conectado ao Google';
+}
+window.addEventListener('online', () => { NET.erro = ''; pintarNet(); toast('Conexão restabelecida.','ok'); });
+window.addEventListener('offline', () => { pintarNet(); toast('Você está offline. Nada será salvo até a conexão voltar.','erro'); });
+const agoraHM = () => new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+
 /* ── API ── */
 async function api(payload){
   if (!API_URL || API_URL.indexOf('COLE_AQUI') === 0) throw new Error('Configure a API_URL no index.html antes de usar.');
-  const r = await fetch(API_URL, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify(payload) });
-  const j = await r.json();
-  if (!j.ok) throw new Error(j.erro || 'Falha na comunicação com o servidor.');
-  return j;
+  const escrita = ['salvar','salvarLote','excluir','excluirLote','upload'].includes(payload.action);
+  if (escrita && !navigator.onLine){ NET.erro = 'sem conexão'; pintarNet(); throw new Error('Você está offline. Reconecte para salvar.'); }
+  if (escrita){ NET.pendentes++; pintarNet(); }
+  try{
+    const r = await fetch(API_URL, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify(payload) });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.erro || 'Falha na comunicação com o servidor.');
+    if (escrita){ NET.erro = ''; NET.ultimo = agoraHM(); }
+    return j;
+  }catch(e){
+    if (escrita) NET.erro = e.message || 'falha de rede';
+    throw e;
+  }finally{
+    if (escrita){ NET.pendentes = Math.max(0, NET.pendentes - 1); pintarNet(); }
+  }
 }
 async function salvar(aba, reg, silencio){
   const j = await api({action:'salvar', aba, registro:reg});
   const lista = DB[aba] || (DB[aba] = []);
   const i = lista.findIndex(x => x.ID === j.registro.ID);
   if (i >= 0) lista[i] = j.registro; else lista.push(j.registro);
-  if (!silencio) toast('Salvo.','ok');
+  if (!silencio) toast('Salvo na nuvem às ' + NET.ultimo + '.','ok');
   return j.registro;
 }
 async function salvarLote(lote){
@@ -295,6 +343,18 @@ async function salvarLote(lote){
     if (i >= 0) lista[i] = it.registro; else lista.push(it.registro);
   });
 }
+/* grava aplicando primeiro na tela e depois na nuvem — a interface não trava */
+async function salvarLoteRapido(lote){
+  lote.forEach(it => { if (!it.registro.ID) it.registro.ID = uid(); });
+  lote.forEach(it => {
+    const L = DB[it.aba] || (DB[it.aba] = []);
+    const i = L.findIndex(x => x.ID === it.registro.ID);
+    if (i >= 0) L[i] = it.registro; else L.push(it.registro);
+  });
+  render();
+  try{ await api({action:'salvarLote', lote}); }
+  catch(e){ toast('Não foi possível salvar: ' + e.message + ' — recarregando da nuvem.','erro'); await carregar(); throw e; }
+}
 async function excluir(aba, id){
   await api({action:'excluir', aba, id});
   DB[aba] = (DB[aba]||[]).filter(x => x.ID !== id);
@@ -305,7 +365,7 @@ async function carregar(avisar){
     const j = await api({action:'carregar'});
     DB = j.dados; DB._planilha = j.planilha; DB._pasta = j.pasta; DB._versao = j.versao;
     $('#hdEscritorio').textContent = cfg('NOME_ESCRITORIO','Escritório de advocacia');
-    render();
+    render(); pintarNet();
     if (avisar) toast('Dados atualizados.','ok');
   }catch(e){ toast(e.message,'erro'); }
   finally{ carregandoOff(); }
@@ -411,11 +471,11 @@ const tarifaPadrao = () => n(cfg('TARIFA_PADRAO','2,50')) || 2.5;
 let CFGABA = 'filiais';
 function abrirConfig(aba){
   CFGABA = aba || CFGABA;
-  const abas = [['contas','Contas bancárias'],['filiais','Filiais'],['pracas','Praças'],['subclasses','Subclasses'],['usuarios','Usuários'],
+  const abas = [['contas','Contas bancárias'],['favorecidos','Favorecidos'],['filiais','Filiais'],['pracas','Praças'],['subclasses','Subclasses'],['usuarios','Usuários'],
                 ['comissionados','Comissionados'],['regras','Regras de comissão'],['geral','Geral']];
   const menu = '<div class="subtabs">' + abas.map(([k,t]) =>
     '<button class="'+(CFGABA===k?'on':'')+'" onclick="abrirConfig(\''+k+'\')">'+t+'</button>').join('') + '</div>';
-  const corpo = { contas:cfgContas, filiais:cfgFiliais, pracas:cfgPracas, usuarios:cfgUsuarios, subclasses:cfgSubclasses,
+  const corpo = { contas:cfgContas, favorecidos:cfgFavorecidos, filiais:cfgFiliais, pracas:cfgPracas, usuarios:cfgUsuarios, subclasses:cfgSubclasses,
                   comissionados:cfgComissionados, regras:cfgRegras, geral:cfgGeral }[CFGABA]();
   modal('Configurações', menu + corpo, '<button class="btn sec" onclick="fecharModal()">Fechar</button>', 'larga');
 }
@@ -423,6 +483,65 @@ function tabelaSimples(cols, linhas){
   return '<div class="tw"><table><thead><tr>' + cols.map(c => '<th'+(c.num?' class="num"':'')+'>'+esc(c.t)+'</th>').join('')
     + '</tr></thead><tbody>' + linhas + '</tbody></table></div>';
 }
+
+/* Favorecidos */
+function cfgFavorecidos(){
+  const L = (DB.FAVORECIDOS||[]).slice().sort((a,b) => String(a.NOME).localeCompare(String(b.NOME),'pt-BR'));
+  const linhas = L.length ? L.map(f => {
+    const contas = (DB.CONTAS_PAGAR||[]).filter(c => c.FAVORECIDO === f.NOME).length;
+    return '<tr><td><b>'+esc(f.NOME)+'</b></td><td>'+esc(f.DOC||'—')+'</td><td>'+esc(f.CATEGORIA||'—')+'</td>'
+      + '<td class="num">'+contas+'</td>'
+      + '<td><span class="tag '+(f.ATIVO==='NAO'?'t-neutro':'t-ok')+'">'+(f.ATIVO==='NAO'?'Inativo':'Ativo')+'</span></td>'
+      + '<td style="text-align:right;white-space:nowrap"><button class="btn sm sec" onclick="formFavorecido(\''+f.ID+'\')">Editar</button> '
+      + '<button class="btn sm per" onclick="apagarReg(\'FAVORECIDOS\',\''+f.ID+'\',\''+esc(f.NOME)+'\',\'favorecidos\')">Excluir</button></td></tr>';
+  }).join('')
+    : '<tr><td colspan="6" class="vazio">Nenhum favorecido. Eles aparecem como sugestão enquanto você digita o nome em contas a pagar.</td></tr>';
+  return '<div style="display:flex;margin-bottom:12px"><button class="btn" onclick="formFavorecido()">Novo favorecido</button></div>'
+    + tabelaSimples([{t:'Nome'},{t:'CPF / CNPJ'},{t:'Categoria padrão'},{t:'Contas',num:1},{t:'Situação'},{t:''}], linhas);
+}
+function formFavorecido(id){
+  const f = (DB.FAVORECIDOS||[]).find(x => x.ID === id) || {};
+  modal(id ? 'Editar favorecido' : 'Novo favorecido',
+    '<div class="grade">' + inp('fvNome','Nome', f.NOME, 'full') + inp('fvDoc','CPF / CNPJ', f.DOC)
+    + sel('fvCat','Categoria padrão', [['','— nenhuma —']].concat(CATEGORIAS_CP.map(c => [c,c])), f.CATEGORIA)
+    + '<div class="campo"><label>Situação</label><select id="fvAtivo"><option value="SIM">Ativo</option><option value="NAO"'+(f.ATIVO==='NAO'?' selected':'')+'>Inativo</option></select></div></div>'
+    + '<p class="mini" style="margin-top:8px">A categoria padrão é sugerida automaticamente ao escolher este favorecido numa nova conta.</p>',
+    '<button class="btn sec" onclick="abrirConfig(\'favorecidos\')">Cancelar</button><button class="btn" onclick="gravarFavorecido(\''+(id||'')+'\',\''+esc(f.NOME||'')+'\')">Salvar favorecido</button>', 'estreita');
+}
+async function gravarFavorecido(id, antigo){
+  const nome = val('fvNome');
+  if (!nome) return toast('Informe o nome do favorecido.','erro');
+  if ((DB.FAVORECIDOS||[]).some(f => f.ID !== id && f.NOME.toLowerCase() === nome.toLowerCase()))
+    return toast('Já existe um favorecido com esse nome.','erro');
+  const lote = [{aba:'FAVORECIDOS', registro:{ID:id||'', NOME:nome, DOC:val('fvDoc'), CATEGORIA:val('fvCat'), ATIVO:val('fvAtivo')}}];
+  if (id && antigo && antigo !== nome){
+    (DB.CONTAS_PAGAR||[]).filter(c => c.FAVORECIDO === antigo).forEach(c =>
+      lote.push({aba:'CONTAS_PAGAR', registro: Object.assign({}, c, {FAVORECIDO:nome})}));
+  }
+  carregandoOn('Salvando…');
+  try{ await salvarLote(lote); abrirConfig('favorecidos'); render(); toast('Favorecido salvo.','ok'); }
+  catch(e){ toast(e.message,'erro'); } finally{ carregandoOff(); }
+}
+/* cadastra na hora, sem sair do formulário que estiver aberto */
+async function addFavorecidoRapido(campoId){
+  const nome = val(campoId);
+  if (!nome) return toast('Digite o nome do favorecido antes de adicionar.','erro');
+  if ((DB.FAVORECIDOS||[]).some(f => f.NOME.toLowerCase() === nome.toLowerCase()))
+    return toast('"'+nome+'" já está cadastrado.','ok');
+  try{
+    await salvarLoteRapido([{aba:'FAVORECIDOS', registro:{ID:uid('fv'), NOME:nome, DOC:'', CATEGORIA:'', ATIVO:'SIM'}}]);
+    const dl = document.getElementById('dlFav');
+    if (dl) dl.innerHTML = optsFavorecidos();
+    toast('"'+nome+'" cadastrado nos favorecidos.','ok');
+  }catch(e){}
+}
+function optsFavorecidos(){
+  return (DB.FAVORECIDOS||[]).filter(f => f.ATIVO !== 'NAO')
+    .slice().sort((a,b) => String(a.NOME).localeCompare(String(b.NOME),'pt-BR'))
+    .map(f => '<option value="'+esc(f.NOME)+'">'+(f.DOC ? esc(f.DOC) : '')+'</option>').join('');
+}
+const CATEGORIAS_CP = ['Repasse a cliente','Comissão','Aluguel','Folha','Impostos','Custas processuais',
+                       'Software','Serviços','Telefonia','Contabilidade','Outras despesas'];
 
 /* Contas bancárias */
 function cfgContas(){
@@ -861,7 +980,9 @@ async function gravarLanc(id){
         FAVORECIDO: lanc.CLIENTE || '', CATEGORIA:'Repasse a cliente', VENCIMENTO: p.VENCIMENTO, VALOR: vCli,
         STATUS: (cpAntigo && cpAntigo.STATUS) || 'Em aberto', DATA_PGTO: (cpAntigo && cpAntigo.DATA_PGTO) || '',
         ORIGEM:'Repasse de parcela', PARCELA_ID: parcId, ANEXO_URL:'',
-        OBS:'Valor previsto — aguardando o crédito da parcela'
+        OBS:'Valor previsto sobre a parcela de '+moeda(p.VALOR)+' · '
+            + memoriaRateio(n(p.VALOR), lanc, tarifa, false)
+            + ' · aguardando o crédito da parcela'
       })});
     } else if (cpAntigo){
       excluirCP.push({aba:'CONTAS_PAGAR', id: cpAntigo.ID});
@@ -956,6 +1077,19 @@ function trechosNum(txt, min){
   (String(txt||'').match(/\d{4,}/g) || []).forEach(s => { if (s.length >= (min||6)) out.add(s); });
   return [...out];
 }
+const pct = v => { const x = n(v); return (x % 1 === 0 ? String(x) : nMoeda(x)) + '%'; };
+/* memória de cálculo do rateio, gravada nas observações da conta a pagar */
+function memoriaRateio(valor, l, tarifa, suc){
+  if (suc) return 'honorários de sucumbência, 100% para o escritório = ' + moeda(valor);
+  const bruCli = rd(valor * n(l.PCT_CLIENTE) / 100);
+  const bruEsc = rd(valor * n(l.PCT_ESCRITORIO) / 100);
+  return pct(l.PCT_CLIENTE) + ' para o cliente = ' + moeda(bruCli)
+    + (tarifa ? ', menos a tarifa de ' + moeda(tarifa) + ' revertida ao escritório' : '')
+    + ', total para o cliente ' + moeda(rd(bruCli - tarifa))
+    + ' · ' + pct(l.PCT_ESCRITORIO) + ' para o escritório = ' + moeda(bruEsc)
+    + (tarifa ? ', mais a tarifa de ' + moeda(tarifa) : '')
+    + ', total para o escritório ' + moeda(rd(bruEsc + tarifa));
+}
 /* candidatos para um crédito na conta: parcelas em aberto e recebimentos avulsos */
 function candidatosCredito(){
   const out = [];
@@ -975,7 +1109,8 @@ function candidatosCredito(){
 }
 /* candidatos para um débito na conta: contas a pagar em aberto e já liberadas */
 function candidatosDebito(){
-  return (DB.CONTAS_PAGAR||[]).filter(c => c.STATUS !== 'Pago' && liberacao(c).tipo !== 'nao').map(c => ({
+  // contas sem valor (boleto ainda não recebido) não entram como sugestão
+  return (DB.CONTAS_PAGAR||[]).filter(c => c.STATUS !== 'Pago' && n(c.VALOR) > 0 && liberacao(c).tipo !== 'nao').map(c => ({
     tipo:'pagar', id:c.ID, valor:n(c.VALOR), venc:c.VENCIMENTO,
     titulo:c.FAVORECIDO || c.DESCRICAO || '—', sub:c.CATEGORIA || '',
     detalhe:c.DESCRICAO || '', doc:'', proc:'', nome:c.FAVORECIDO, pasta:'' }));
@@ -988,8 +1123,10 @@ function sugestoes(mov, ignorarData){
   (ehDebito(mov) ? candidatosDebito() : candidatosCredito()).forEach(c => {
     let s = 0; const por = [];
     const dif = Math.abs(c.valor - vm);
+    // acima de R$ 1,00 de diferença o registro nem é sugerido
+    if (dif > 1) return;
     if (dif <= 0.01){ s += 50; por.push('valor idêntico'); }
-    else if (dif <= Math.max(5, c.valor*0.01)){ s += 28; por.push('valor próximo (dif. '+moeda(dif)+')'); }
+    else { s += 28; por.push('valor próximo (dif. '+moeda(dif)+')'); }
 
     const doc = digitos(c.doc);
     if (doc.length >= 11 && descNum.includes(doc)){ s += 40; por.push('CNPJ/CPF do cliente na descrição'); }
@@ -1040,8 +1177,7 @@ function telaConciliacao(){
 
   const topo = cabec('Conciliação bancária',
       'Recebimentos e pagamentos só se efetivam aqui. Nada é baixado manualmente.',
-      '<button class="btn sec" onclick="formImportar()">Importar extrato</button>'
-    + '<button class="btn sec" onclick="formMovManual()">Lançar movimento</button>'
+      '<button class="btn" onclick="formImportar()">Importar extrato</button>'
     + '<button class="btn sec" onclick="abrirConfig(\'contas\')">Contas bancárias</button>')
     + ((DB.CONTAS_BANCO||[]).length
         ? '<div class="filtros">' + sel('fConta','Conta bancária', opcoesContas(true), conta, '', 'onchange="setF(\'fConta\',this.value)"')
@@ -1093,31 +1229,38 @@ function listaPendentes(pend){
     + sel('fTipoMov','Tipo', [['','Créditos e débitos'],['C','Só créditos'],['D','Só débitos']], tipo, '', 'onchange="setF(\'fTipoMov\',this.value)"')
     + '</div>';
   if (!L.length) return filtros + '<div class="card">'+vazio('Nada neste filtro','Ajuste a busca ou o tipo de movimento.')+'</div>';
-  return filtros + L.map(m => '<div class="card"><div class="corpo">'
-      + '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:baseline;margin-bottom:11px">'
-      + '<b class="num '+(ehDebito(m)?'neg':'pos')+'" style="font-size:17px">'+moeda(m.VALOR)+'</b>'
-      + '<span class="tag '+(ehDebito(m)?'t-ni':'t-ok')+'">'+(ehDebito(m)?'Débito':'Crédito')+'</span>'
-      + '<span>'+dataBR(m.DATA)+'</span>'
-      + '<span class="mini" style="flex:1;min-width:150px">'+esc(m.IDENTIFICACAO||'—')+'</span>'
-      + '<button class="btn sm sec" onclick="escolherManual(\''+m.ID+'\')">Escolher manualmente</button>'
-      + '<button class="btn sm sec" onclick="marcarNaoIdentificado(\''+m.ID+'\')">Não identificado</button>'
-      + '<button class="btn sm per" onclick="excluirMov(\''+m.ID+'\')">Excluir</button></div>'
-      + boxSugestoes(m) + '</div></div>').join('');
+  return filtros + L.map(m => '<div class="card"><div class="corpo conc">'
+      + ladoMovimento(m)
+      + '<div class="sugs"><p class="mini" style="margin-bottom:7px">'
+      + (ehDebito(m) ? 'Contas a pagar compatíveis:' : 'Registros em aberto compatíveis:') + '</p>'
+      + boxSugestoes(m) + '</div></div></div>').join('');
+}
+function ladoMovimento(m, extras){
+  return '<div class="lado">'
+    + '<span class="valor '+(ehDebito(m)?'neg':'pos')+'">'+moeda(m.VALOR)+'</span>'
+    + '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">'
+    + '<span class="tag '+(ehDebito(m)?'t-ni':'t-ok')+'">'+(ehDebito(m)?'Débito':'Crédito')+'</span>'
+    + '<span class="mini">'+dataBR(m.DATA)+(m.BANCO?' · '+esc(m.BANCO):'')+'</span></div>'
+    + '<div style="font-size:12.5px;line-height:1.4">'+esc(m.IDENTIFICACAO||'—')+'</div>'
+    + '<div class="acoes">'
+    + '<button class="btn sm sec" onclick="escolherManual(\''+m.ID+'\')">Escolher manualmente</button>'
+    + '<button class="btn sm sec" onclick="formNovoNaConciliacao(\''+m.ID+'\')">'
+      + (ehDebito(m) ? 'Lançar nova conta a pagar' : 'Lançar novo recebimento') + '</button>'
+    + (extras || ('<button class="btn sm sec" onclick="marcarNaoIdentificado(\''+m.ID+'\')">Marcar como não identificado</button>'
+                + '<button class="btn sm per" onclick="excluirMov(\''+m.ID+'\')">Excluir movimento</button>'))
+    + '</div></div>';
 }
 function listaNaoIdentificados(L){
   if (!L.length) return '<div class="card">'+vazio('Nenhum movimento não identificado','Depósitos sem origem aparecem aqui com sugestões de pastas de mesmo valor.')+'</div>';
   return L.sort((a,b) => String(a.DATA).localeCompare(String(b.DATA))).map(m =>
-    '<div class="card"><div class="corpo">'
-    + '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:baseline;margin-bottom:11px">'
-    + '<b class="num '+(ehDebito(m)?'neg':'pos')+'" style="font-size:17px">'+moeda(m.VALOR)+'</b><span>'+dataBR(m.DATA)+'</span>'
-    + '<span class="mini" style="flex:1;min-width:150px">'+esc(m.IDENTIFICACAO||'—')+'</span>'
-    + '<button class="btn sm sec" onclick="voltarPendente(\''+m.ID+'\')">Voltar para pendentes</button>'
-    + '<button class="btn sm sec" onclick="escolherManual(\''+m.ID+'\')">Escolher pasta</button></div>'
-    + '<p class="mini" style="margin-bottom:7px">'
+    '<div class="card"><div class="corpo conc">'
+    + ladoMovimento(m, '<button class="btn sm sec" onclick="voltarPendente(\''+m.ID+'\')">Voltar para pendentes</button>'
+                     + '<button class="btn sm per" onclick="excluirMov(\''+m.ID+'\')">Excluir movimento</button>')
+    + '<div class="sugs"><p class="mini" style="margin-bottom:7px">'
     + (ehDebito(m) ? 'Contas a pagar em aberto com o mesmo valor:'
                    : 'Pastas em aberto com o mesmo valor — inclusive acordos lançados depois da data do crédito:') + '</p>'
     + boxSugestoes(m, true, 'Nenhum registro em aberto com esse valor. Assim que o acordo for lançado, a sugestão aparece aqui.')
-    + '</div></div>').join('');
+    + '</div></div></div>').join('');
 }
 /* descreve o destino de um movimento já conciliado */
 function alvoDe(mov){
@@ -1204,7 +1347,7 @@ async function conciliarParcela(m, p){
       STATUS:(cpAntigo && cpAntigo.STATUS) || 'Em aberto', DATA_PGTO:(cpAntigo && cpAntigo.DATA_PGTO) || '',
       ORIGEM:'Repasse de parcela', PARCELA_ID:p.ID, ANEXO_URL:(cpAntigo && cpAntigo.ANEXO_URL) || '',
       OBS:'Liberado — crédito de '+moeda(valor)+' conciliado em '+dataBR(m.DATA)
-          +(tarifa?' · tarifa de '+moeda(tarifa)+' revertida ao escritório':'') })});
+          +' · '+memoriaRateio(valor, l, tarifa, suc) })});
   }
   (DB.REGRAS_COMISSAO||[]).filter(r => r.SUBCLASSE && r.SUBCLASSE === l.SUBCLASSE).forEach(r => {
     const v = rd(baseCom * n(r.PCT) / 100);
@@ -1213,12 +1356,11 @@ async function conciliarParcela(m, p){
       COMISSIONADO_ID:r.COMISSIONADO_ID, BASE:baseCom, PCT:n(r.PCT), VALOR:v, STATUS:'A pagar', DATA:m.DATA, CP_ID:'' }});
   });
 
-  carregandoOn('Conciliando…');
   try{
-    await salvarLote(lote); render();
-    toast('Recebimento conciliado. ' + (vCli > 0 ? moeda(vCli)+' liberado para o cliente · '+moeda(vEsc)+' para o escritório.'
-                                                 : 'Valor integral do escritório.'), 'ok');
-  }catch(e){ toast(e.message,'erro'); } finally{ carregandoOff(); }
+    await salvarLoteRapido(lote);
+    toast('Recebimento conciliado e salvo. ' + (vCli > 0 ? moeda(vCli)+' liberado para o cliente · '+moeda(vEsc)+' para o escritório.'
+                                                         : 'Valor integral do escritório.'), 'ok');
+  }catch(e){}
 }
 
 async function conciliarPagamento(m, cp){
@@ -1232,9 +1374,7 @@ async function conciliarPagamento(m, cp){
   ];
   (DB.COMISSOES||[]).filter(c => c.CP_ID === cp.ID).forEach(c =>
     lote.push({aba:'COMISSOES', registro: Object.assign({}, c, {STATUS:'Paga'})}));
-  carregandoOn('Baixando pagamento…');
-  try{ await salvarLote(lote); render(); toast('Pagamento de '+moeda(valor)+' baixado.','ok'); }
-  catch(e){ toast(e.message,'erro'); } finally{ carregandoOff(); }
+  try{ await salvarLoteRapido(lote); toast('Pagamento de '+moeda(valor)+' baixado e salvo.','ok'); }catch(e){}
 }
 
 async function conciliarRecebimento(m, cr){
@@ -1244,9 +1384,7 @@ async function conciliarRecebimento(m, cr){
       OBS:'Recebido pelo crédito conciliado em '+dataBR(m.DATA)})},
     {aba:'EXTRATO', registro: Object.assign({}, m, {STATUS:'Conciliado', PARCELA_ID:cr.ID})}
   ];
-  carregandoOn('Conciliando…');
-  try{ await salvarLote(lote); render(); toast('Recebimento de '+moeda(valor)+' conciliado.','ok'); }
-  catch(e){ toast(e.message,'erro'); } finally{ carregandoOff(); }
+  try{ await salvarLoteRapido(lote); toast('Recebimento de '+moeda(valor)+' conciliado e salvo.','ok'); }catch(e){}
 }
 
 /* ── Desfazer ── */
@@ -1265,7 +1403,9 @@ async function desfazer(movId){
       const tar = (p.TIPO !== 'Sucumbência' && l.TARIFA_ATIVA !== 'NAO') ? rd(n(l.TARIFA_VALOR) || tarifaPadrao()) : 0;
       lote.push({aba:'CONTAS_PAGAR', registro: Object.assign({}, cp, {
         VENCIMENTO:p.VENCIMENTO, VALOR:rd(n(p.VALOR) * n(l.PCT_CLIENTE) / 100 - tar),
-        STATUS:'Em aberto', DATA_PGTO:'', OBS:'Valor previsto — aguardando o crédito da parcela' })});
+        STATUS:'Em aberto', DATA_PGTO:'',
+        OBS:'Valor previsto sobre a parcela de '+moeda(p.VALOR)+' · '+memoriaRateio(n(p.VALOR), l, tar, p.TIPO === 'Sucumbência')
+            +' · aguardando o crédito da parcela' })});
     }
     (DB.COMISSOES||[]).filter(c => c.PARCELA_ID === p.ID && c.STATUS !== 'Paga')
       .forEach(c => apagar.push({aba:'COMISSOES', id:c.ID}));
@@ -1286,26 +1426,23 @@ async function desfazer(movId){
   } else if (!confirm('Este movimento não aponta para nenhum registro. Voltar para pendentes?')) return;
 
   lote.push({aba:'EXTRATO', registro: Object.assign({}, m, {STATUS:'Pendente', PARCELA_ID:''})});
-  carregandoOn('Desfazendo…');
   try{
-    await salvarLote(lote);
     if (apagar.length){
-      await api({action:'excluirLote', lote:apagar});
       apagar.forEach(x => { DB[x.aba] = (DB[x.aba]||[]).filter(y => y.ID !== x.id); });
+      await api({action:'excluirLote', lote:apagar});
     }
-    render(); toast('Conciliação desfeita.','ok');
-  }catch(e){ toast(e.message,'erro'); } finally{ carregandoOff(); }
+    await salvarLoteRapido(lote);
+    toast('Conciliação desfeita.','ok');
+  }catch(e){}
 }
 
 async function marcarNaoIdentificado(id){
   const m = (DB.EXTRATO||[]).find(x => x.ID === id); if (!m) return;
-  await salvar('EXTRATO', Object.assign({}, m, {STATUS:'Nao identificado'}), true);
-  render(); toast('Movido para não identificados.','ok');
+  try{ await salvarLoteRapido([{aba:'EXTRATO', registro: Object.assign({}, m, {STATUS:'Nao identificado'})}]); }catch(e){}
 }
 async function voltarPendente(id){
   const m = (DB.EXTRATO||[]).find(x => x.ID === id); if (!m) return;
-  await salvar('EXTRATO', Object.assign({}, m, {STATUS:'Pendente'}), true);
-  render();
+  try{ await salvarLoteRapido([{aba:'EXTRATO', registro: Object.assign({}, m, {STATUS:'Pendente'})}]); }catch(e){}
 }
 async function excluirMov(id){
   if (!confirm('Excluir este movimento do extrato?')) return;
@@ -1327,30 +1464,53 @@ function escolherManual(movId){
     + '<button class="btn ok" onclick="const p=val(\'mnParc\');fecharModal();conciliar(\''+movId+'\',p)">Conciliar</button>',
     'estreita');
 }
-function formMovManual(){
-  if (!(DB.CONTAS_BANCO||[]).length){
-    modal('Lançar movimento bancário',
-      '<div class="erro">Cadastre primeiro a conta bancária a que este movimento pertence.</div>',
-      '<button class="btn sec" onclick="fecharModal()">Fechar</button><button class="btn" onclick="abrirConfig(\'contas\')">Cadastrar conta</button>', 'estreita');
-    return;
-  }
-  modal('Lançar movimento bancário',
-    '<div class="grade">' + inp('mvData','Data', hoje(), '', 'date')
-    + inp('mvValor','Valor (R$) — negativo para débito','')
-    + inp('mvDesc','Identificação / histórico','','full')
-    + sel('mvBanco','Conta bancária', opcoesContas(false), FILTROS.fConta || '') + '</div>'
-    + '<p class="mini" style="margin-top:8px">Use apenas quando o movimento não veio no arquivo do extrato. Ele entra como pendente e ainda precisa ser conciliado.</p>',
-    '<button class="btn sec" onclick="fecharModal()">Cancelar</button><button class="btn" onclick="gravarMovManual()">Lançar</button>','estreita');
+/* Lança uma conta a pagar (débito) ou um recebimento (crédito) direto na conciliação
+   e já concilia o movimento com ele. */
+function formNovoNaConciliacao(movId){
+  const m = (DB.EXTRATO||[]).find(x => x.ID === movId); if (!m) return;
+  const deb = ehDebito(m);
+  const valor = nMoeda(Math.abs(n(m.VALOR)));
+  const catsR = ['Honorários','Consultoria','Reembolso','Outras receitas'];
+  const corpo = '<p class="mini" style="margin-bottom:14px">Movimento de <b>'+moeda(m.VALOR)+'</b> em '+dataBR(m.DATA)
+      + (m.BANCO ? ' · '+esc(m.BANCO) : '') + ' — '+esc(m.IDENTIFICACAO||'')+'</p>'
+    + '<div class="grade">'
+    + inp('ncDesc','Descrição', m.IDENTIFICACAO || '', 'full')
+    + (deb
+        ? '<div class="campo"><label for="ncQuem">Favorecido</label><div style="display:flex;gap:6px">'
+          + '<input id="ncQuem" list="dlFav" autocomplete="off" placeholder="digite para buscar" style="flex:1;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r)">'
+          + '<button class="btn sec" style="padding:8px 12px" title="Adicionar aos favorecidos" onclick="addFavorecidoRapido(\'ncQuem\')">+</button></div>'
+          + '<datalist id="dlFav">'+optsFavorecidos()+'</datalist></div>'
+        : inp('ncQuem','Cliente', ''))
+    + sel('ncCat','Categoria', deb ? CATEGORIAS_CP : catsR, deb ? 'Outras despesas' : 'Honorários')
+    + inp('ncVenc', deb ? 'Vencimento' : 'Previsão', m.DATA, '', 'date')
+    + inp('ncValor','Valor (R$)', valor)
+    + '<div class="campo full"><label for="ncObs">Observações</label><textarea id="ncObs" rows="2"></textarea></div>'
+    + '</div>'
+    + '<p class="mini" style="margin-top:10px">Ao salvar, o registro é criado e este movimento já fica conciliado com ele.</p>';
+  modal(deb ? 'Nova conta a pagar a partir do extrato' : 'Novo recebimento a partir do extrato', corpo,
+    '<button class="btn sec" onclick="fecharModal()">Cancelar</button>'
+    + '<button class="btn ok" onclick="gravarNovoNaConciliacao(\''+movId+'\')">Salvar e conciliar</button>');
 }
-async function gravarMovManual(){
-  const v = n(val('mvValor')); if (!v) return toast('Informe o valor.','erro');
-  if (!val('mvBanco')) return toast('Escolha a conta bancária.','erro');
-  const reg = {ID:uid('m'), DATA:val('mvData'), IDENTIFICACAO:val('mvDesc'), VALOR:rd(v),
-    TIPO: v < 0 ? 'D' : 'C', STATUS:'Pendente', PARCELA_ID:'',
-    HASH: hashMov(val('mvData'), v, val('mvDesc')), BANCO:val('mvBanco'),
-    IMPORTADO_EM:hoje(), OBS:'Lançamento manual'};
-  const banco = val('mvBanco');
-  await salvar('EXTRATO', reg); fecharModal(); FILTROS.fConta = banco; render();
+async function gravarNovoNaConciliacao(movId){
+  const m = (DB.EXTRATO||[]).find(x => x.ID === movId); if (!m) return;
+  const deb = ehDebito(m);
+  if (!val('ncDesc')) return toast('Informe a descrição.','erro');
+  const valor = rd(n(val('ncValor')));
+  if (!valor) return toast('Informe o valor.','erro');
+  const id = uid(deb ? 'cp' : 'cr');
+  const reg = deb
+    ? {ID:id, DESCRICAO:val('ncDesc'), FAVORECIDO:val('ncQuem'), CATEGORIA:val('ncCat'),
+       VENCIMENTO:val('ncVenc'), VALOR:valor, STATUS:'Em aberto', DATA_PGTO:'',
+       ORIGEM:'Lançado na conciliação', PARCELA_ID:'', ANEXO_URL:'', OBS:val('ncObs')}
+    : {ID:id, DESCRICAO:val('ncDesc'), CLIENTE:val('ncQuem'), CATEGORIA:val('ncCat'),
+       VENCIMENTO:val('ncVenc'), VALOR:valor, STATUS:'Em aberto', DATA_RECEB:'',
+       ORIGEM:'Lançado na conciliação', ANEXO_URL:'', OBS:val('ncObs')};
+  const aba = deb ? 'CONTAS_PAGAR' : 'CONTAS_RECEBER';
+  fecharModal();
+  try{
+    await salvarLoteRapido([{aba, registro:reg}]);
+    await conciliar(movId, id);
+  }catch(e){}
 }
 const hashMov = (d,v,desc) => String(d)+'|'+rd(v)+'|'+String(desc||'').replace(/\s+/g,' ').trim().toUpperCase().slice(0,60);
 /* ══════════════════ IMPORTAÇÃO DE EXTRATO ══════════════════ */
@@ -1536,9 +1696,9 @@ async function confirmarImport(){
       ID:uid('m'), DATA:m.DATA, IDENTIFICACAO:m.IDENTIFICACAO, VALOR:m.VALOR,
       TIPO: n(m.VALOR) < 0 ? 'D' : 'C', STATUS:'Pendente', PARCELA_ID:'', HASH:m.HASH,
       BANCO:banco, IMPORTADO_EM:hoje(), OBS:'' }}));
-    for (let i=0;i<lote.length;i+=120){
-      carregandoOn('Importando… ' + Math.min(i+120, lote.length) + ' de ' + lote.length);
-      await salvarLote(lote.slice(i, i+120));
+    for (let i=0;i<lote.length;i+=300){
+      carregandoOn('Importando… ' + Math.min(i+300, lote.length) + ' de ' + lote.length);
+      await salvarLote(lote.slice(i, i+300));
     }
     fecharModal(); SUB = 'pendentes'; FILTROS.fConta = banco; render();
     toast(lote.length + ' movimentos importados. Confira as sugestões.','ok');
@@ -1680,6 +1840,16 @@ function selo(c){
     ? '<span class="selo ok" title="'+esc(s.titulo)+'">✓</span>'
     : '<span class="selo nao" title="'+esc(s.titulo)+'">✕</span>';
 }
+/* conta recorrente ainda sem boleto: valor em branco */
+const semValorCP = c => c.STATUS !== 'Pago' && !n(c.VALOR);
+function origemCP(c){
+  const partes = [];
+  if (c.ORIGEM && c.ORIGEM !== 'Manual') partes.push(c.ORIGEM);
+  const lb = liberacao(c);
+  if (lb.tipo === 'ok') partes.push('recebido em ' + dataBR(lb.p.DATA_CREDITO));
+  else if (lb.tipo === 'nao') partes.push('aguardando recebimento');
+  return partes.length ? '<div class="mini">'+esc(partes.join(' · '))+'</div>' : '';
+}
 function telaPagar(){
   const t = FILTROS.busca, mes = FILTROS.fMesP || '', st = FILTROS.fStP || '';
   const hj = hoje();
@@ -1687,33 +1857,37 @@ function telaPagar(){
     .filter(c => casa(c, ['DESCRICAO','FAVORECIDO','CATEGORIA'], t))
     .filter(c => !mes || mesDe(c.VENCIMENTO) === mes)
     .filter(c => !st || c.STATUS === st)
-    .filter(c => !FILTROS.fLib || (FILTROS.fLib === 'nao' ? liberacao(c).tipo === 'nao' : liberacao(c).tipo !== 'nao'))
+    .filter(c => !FILTROS.fLib
+      || (FILTROS.fLib === 'sem' ? semValorCP(c)
+      : FILTROS.fLib === 'nao' ? liberacao(c).tipo === 'nao' : liberacao(c).tipo !== 'nao'))
     .sort((a,b) => String(a.VENCIMENTO).localeCompare(String(b.VENCIMENTO)));
   const abertas = L.filter(c => c.STATUS !== 'Pago');
   const pagas = L.filter(c => c.STATUS === 'Pago');
   const atraso = abertas.filter(c => c.VENCIMENTO < hj && liberacao(c).tipo !== 'nao');
   const liberadas = abertas.filter(c => liberacao(c).tipo !== 'nao');
   const travadas = abertas.filter(c => liberacao(c).tipo === 'nao');
+  const semBoleto = abertas.filter(semValorCP);
 
   return cabec('Contas a pagar', '✕ = a parcela do cliente ainda não caiu. ✓ = já recebemos e o repasse pode ser pago. A baixa é feita conciliando o débito no extrato.',
-      '<button class="btn" onclick="formCP()">Nova conta</button>'
+      '<button class="btn" onclick="formCP()">Lançar nova conta</button>'
     + '<button class="btn sec" onclick="exportarCSV(\'contas-a-pagar\')">Exportar CSV</button>')
     + '<div class="kpis">'
     + kpi('Em aberto', moeda(abertas.reduce((s,c)=>s+n(c.VALOR),0)), abertas.length + ' conta(s)', 'b')
     + kpi('Vencidas', moeda(atraso.reduce((s,c)=>s+n(c.VALOR),0)), atraso.length + ' em atraso', atraso.length ? 'n' : '')
     + kpi('Liberadas para pagamento', moeda(liberadas.reduce((s,c)=>s+n(c.VALOR),0)), liberadas.length + ' conta(s) com ✓', 'p')
     + kpi('Aguardando recebimento', moeda(travadas.reduce((s,c)=>s+n(c.VALOR),0)), travadas.length + ' repasse(s) com ✕', travadas.length ? 'n' : '')
+    + kpi('Boletos não recebidos', semBoleto.length, 'contas recorrentes ainda sem valor', semBoleto.length ? 'b' : '')
     + '</div>'
     + '<div class="filtros">' + campoBusca('Descrição, favorecido…') + selMes('fMesP', mes)
     + sel('fStP','Situação',[['','Todas'],['Em aberto','Em aberto'],['Pago','Pago']], st,'','onchange="setF(\'fStP\',this.value)"')
-    + sel('fLib','Liberação',[['','Todas'],['ok','Liberadas ✓'],['nao','Aguardando ✕']], FILTROS.fLib||'','','onchange="setF(\'fLib\',this.value)"') + '</div>'
+    + sel('fLib','Liberação',[['','Todas'],['ok','Liberadas ✓'],['nao','Aguardando ✕'],['sem','Sem boleto']], FILTROS.fLib||'','','onchange="setF(\'fLib\',this.value)"') + '</div>'
     + '<div class="card"><div class="tw"><table><thead><tr><th style="text-align:center">Recebido</th><th>Vencimento</th><th>Descrição</th><th>Favorecido</th>'
     + '<th>Categoria</th><th class="num">Valor</th><th>Situação</th><th></th></tr></thead><tbody>'
     + (L.length ? L.map(c => '<tr'+(c.STATUS!=='Pago' && c.VENCIMENTO<hj && liberacao(c).tipo!=='nao' ? ' class="grifo"' : '')+'>'
       + '<td style="text-align:center">'+selo(c)+'</td>'
-      + '<td>'+dataBR(c.VENCIMENTO)+'</td><td>'+esc(c.DESCRICAO)
-      + (c.ORIGEM && c.ORIGEM !== 'Manual' ? '<div class="mini">'+esc(c.ORIGEM)+'</div>' : '') + '</td>'
-      + '<td>'+esc(c.FAVORECIDO||'—')+'</td><td>'+esc(c.CATEGORIA||'—')+'</td><td class="num">'+nMoeda(c.VALOR)+'</td>'
+      + '<td>'+dataBR(c.VENCIMENTO)+'</td><td'+(c.OBS?' title="'+esc(c.OBS)+'"':'')+'>'+esc(c.DESCRICAO) + origemCP(c) + '</td>'
+      + '<td>'+esc(c.FAVORECIDO||'—')+'</td><td>'+esc(c.CATEGORIA||'—')+'</td>'
+      + '<td class="num">'+(semValorCP(c) ? '<span class="tag t-pend">boleto não recebido</span>' : nMoeda(c.VALOR))+'</td>'
       + '<td><span class="tag '+(c.STATUS==='Pago'?'t-ok':'t-pend')+'">'+esc(c.STATUS)+(c.DATA_PGTO?' '+dataBR(c.DATA_PGTO):'')+'</span></td>'
       + '<td style="text-align:right;white-space:nowrap">'
       + (c.STATUS==='Pago'
@@ -1724,25 +1898,99 @@ function telaPagar(){
       : '<tr><td colspan="8">'+vazio('Nenhuma conta a pagar','O repasse ao cliente entra aqui já no lançamento do acordo, com ✕, e ganha o ✓ quando a parcela é conciliada.')+'</td></tr>')
     + '</tbody></table></div></div>';
 }
+let REC_TMP = [];
 function formCP(id){
   const c = (DB.CONTAS_PAGAR||[]).find(x => x.ID === id) || {};
   if (c.STATUS === 'Pago') return toast('Esta conta já foi baixada pelo extrato. Desfaça a conciliação para alterá-la.','erro');
-  const cats = ['Repasse a cliente','Comissão','Aluguel','Folha','Impostos','Custas processuais','Software','Serviços','Outras despesas'];
-  modal(id ? 'Editar conta a pagar' : 'Nova conta a pagar',
-    '<div class="grade">' + inp('cpDesc','Descrição', c.DESCRICAO, 'full') + inp('cpFav','Favorecido', c.FAVORECIDO)
-    + sel('cpCat','Categoria', cats, c.CATEGORIA || 'Outras despesas')
-    + inp('cpVenc','Vencimento', c.VENCIMENTO || hoje(), '', 'date') + inp('cpValor','Valor (R$)', c.VALOR ? nMoeda(c.VALOR) : '')
-    + '<div class="campo full"><label for="cpObs">Observações</label><textarea id="cpObs" rows="2">'+esc(c.OBS||'')+'</textarea></div></div>'
+  REC_TMP = [];
+  modal(id ? 'Editar conta a pagar' : 'Lançar nova conta a pagar',
+    '<div class="grade">' + inp('cpDesc','Descrição', c.DESCRICAO, 'full')
+    + '<div class="campo"><label for="cpFav">Favorecido</label><div style="display:flex;gap:6px">'
+      + '<input id="cpFav" list="dlFav" autocomplete="off" value="'+esc(c.FAVORECIDO||'')+'" placeholder="digite para buscar" oninput="favEscolhido()" style="flex:1;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r)">'
+      + '<button class="btn sec" style="padding:8px 12px" title="Adicionar aos favorecidos" onclick="addFavorecidoRapido(\'cpFav\')">+</button></div>'
+      + '<datalist id="dlFav">'+optsFavorecidos()+'</datalist></div>'
+    + sel('cpCat','Categoria', CATEGORIAS_CP, c.CATEGORIA || 'Outras despesas')
+    + inp('cpVenc','Vencimento', c.VENCIMENTO || hoje(), '', 'date')
+    + inp('cpValor','Valor (R$)', c.VALOR ? nMoeda(c.VALOR) : '')
+    + '<div class="campo full"><label for="cpObs">Observações</label><textarea id="cpObs" rows="2">'+esc(c.OBS||'')+'</textarea></div>'
+    + (id ? '' :
+        '<div class="check full"><input type="checkbox" id="cpRec" onchange="toggleRec()"><label for="cpRec">Conta recorrente — este favorecido tem boleto todo mês</label></div>'
+      + '<div class="full" id="boxRec"></div>')
+    + '</div>'
     + '<p class="mini" style="margin-top:8px">A conta é dada como paga apenas quando o débito correspondente for conciliado no extrato.</p>',
     '<button class="btn sec" onclick="fecharModal()">Cancelar</button><button class="btn" onclick="gravarCP(\''+(id||'')+'\')">Salvar conta</button>');
 }
+/* ao escolher um favorecido já cadastrado, puxa a categoria padrão dele */
+function favEscolhido(){
+  const f = (DB.FAVORECIDOS||[]).find(x => x.NOME.toLowerCase() === val('cpFav').toLowerCase());
+  const campo = document.getElementById('cpCat');
+  if (f && f.CATEGORIA && campo) campo.value = f.CATEGORIA;
+}
+function toggleRec(){
+  const box = document.getElementById('boxRec');
+  if (!val('cpRec')){ box.innerHTML = ''; REC_TMP = []; return; }
+  const dia = Number(String(val('cpVenc')).slice(8,10)) || new Date().getDate();
+  box.innerHTML = '<div class="secao-form">Contas recorrentes</div>'
+    + '<div class="grade" style="margin-bottom:10px">'
+    + inp('recDia','Dia do vencimento', dia, '', 'number', 'min="1" max="31" onchange="gerarRec()"')
+    + inp('recMeses','Repetir por (meses)', 12, '', 'number', 'min="1" max="36" onchange="gerarRec()"')
+    + inp('recInicio','A partir de', String(val('cpVenc')||hoje()).slice(0,7)+'-01', '', 'month', 'onchange="gerarRec()"')
+    + '<div class="campo"><label>&nbsp;</label><button class="btn sec" onclick="gerarRec()">Gerar meses</button></div>'
+    + '</div><div id="tabRec"></div>';
+  gerarRec();
+}
+function gerarRec(){
+  const dia = Math.min(31, Math.max(1, parseInt(val('recDia')) || 1));
+  const meses = Math.min(36, Math.max(1, parseInt(val('recMeses')) || 12));
+  const ini = (val('recInicio') || String(hoje()).slice(0,7)) + '-01';
+  const base = n(val('cpValor'));
+  const d0 = new Date(ini + 'T12:00');
+  const novas = [];
+  for (let i=0;i<meses;i++){
+    const d = new Date(d0.getFullYear(), d0.getMonth() + i, 1, 12);
+    const ultimo = new Date(d.getFullYear(), d.getMonth()+1, 0).getDate();
+    d.setDate(Math.min(dia, ultimo));
+    const ant = REC_TMP[i];
+    novas.push({ venc: d.toISOString().slice(0,10), valor: ant ? ant.valor : (base || '') });
+  }
+  REC_TMP = novas; pintarRec();
+}
+function pintarRec(){
+  const box = document.getElementById('tabRec'); if (!box) return;
+  const soma = REC_TMP.reduce((s,r) => s + n(r.valor), 0);
+  const sem = REC_TMP.filter(r => !n(r.valor)).length;
+  box.innerHTML = '<div class="tw" style="max-height:260px;overflow:auto"><table><thead><tr><th>#</th><th>Vencimento</th><th class="num">Valor (R$)</th><th></th></tr></thead><tbody>'
+    + REC_TMP.map((r,i) =>
+      '<tr><td>'+(i+1)+'</td>'
+      + '<td><input type="date" value="'+esc(r.venc)+'" onchange="REC_TMP['+i+'].venc=this.value" style="padding:4px 6px;border:1px solid var(--line);border-radius:4px"></td>'
+      + '<td class="num"><input value="'+(n(r.valor)?nMoeda(r.valor):'')+'" placeholder="em branco" oninput="REC_TMP['+i+'].valor=this.value" onblur="pintarRec()" style="width:110px;text-align:right;padding:4px 6px;border:1px solid var(--line);border-radius:4px;font-family:\'IBM Plex Mono\',monospace"></td>'
+      + '<td>'+(n(r.valor) ? '' : '<span class="tag t-pend">boleto não recebido</span>')+'</td></tr>').join('')
+    + '</tbody><tfoot><tr><th colspan="2" style="text-align:right">Total informado</th><th class="num">'+nMoeda(soma)+'</th><th class="mini">'+sem+' sem valor</th></tr></tfoot></table></div>'
+    + '<p class="mini" style="margin-top:6px">Deixe o valor em branco nos meses em que o boleto ainda não chegou. Essas contas ficam marcadas como "boleto não recebido" e podem ser preenchidas depois.</p>';
+}
 async function gravarCP(id){
-  if (!val('cpDesc') || !n(val('cpValor'))) return toast('Informe descrição e valor.','erro');
+  const recorrente = !id && val('cpRec') && REC_TMP.length;
+  if (!val('cpDesc')) return toast('Informe a descrição.','erro');
+  if (!recorrente && !n(val('cpValor'))) return toast('Informe o valor.','erro');
   const atual = (DB.CONTAS_PAGAR||[]).find(x => x.ID === id) || {};
-  await salvar('CONTAS_PAGAR', Object.assign({}, atual, {ID:id||'', DESCRICAO:val('cpDesc'), FAVORECIDO:val('cpFav'),
-    CATEGORIA:val('cpCat'), VENCIMENTO:val('cpVenc'), VALOR:rd(n(val('cpValor'))),
-    STATUS: atual.STATUS || 'Em aberto', ORIGEM: atual.ORIGEM || 'Manual', OBS:val('cpObs')}));
-  fecharModal(); render();
+  const comum = { DESCRICAO:val('cpDesc'), FAVORECIDO:val('cpFav'), CATEGORIA:val('cpCat'), OBS:val('cpObs') };
+
+  if (recorrente){
+    const lote = REC_TMP.map((r,i) => ({aba:'CONTAS_PAGAR', registro: Object.assign({}, comum, {
+      ID:uid('cp'), VENCIMENTO:r.venc, VALOR: n(r.valor) ? rd(n(r.valor)) : '',
+      STATUS:'Em aberto', DATA_PGTO:'', ORIGEM:'Recorrente', PARCELA_ID:'', ANEXO_URL:'' })}));
+    fecharModal();
+    try{ await salvarLoteRapido(lote); toast(lote.length + ' contas recorrentes lançadas e salvas.','ok'); }catch(e){}
+    return;
+  }
+  fecharModal();
+  try{
+    await salvarLoteRapido([{aba:'CONTAS_PAGAR', registro: Object.assign({}, atual, comum, {ID:id||uid('cp'),
+      VENCIMENTO:val('cpVenc'), VALOR:rd(n(val('cpValor'))),
+      STATUS: atual.STATUS || 'Em aberto', DATA_PGTO: atual.DATA_PGTO || '',
+      ORIGEM: atual.ORIGEM || 'Manual', PARCELA_ID: atual.PARCELA_ID || '', ANEXO_URL: atual.ANEXO_URL || ''})}]);
+    toast('Conta salva na nuvem.','ok');
+  }catch(e){}
 }
 /* Sem baixa manual: um pagamento só se efetiva conciliando o débito no extrato bancário. */
 /* ══════════════════ COMISSÕES ══════════════════ */
