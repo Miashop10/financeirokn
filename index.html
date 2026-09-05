@@ -225,7 +225,7 @@ td.c,th.c{text-align:center}
   <aside class="side">
     <div class="brand">
       <div class="mark" id="brandName">Financeiro</div>
-      <div class="sub">Gestão financeira do escritório · v5</div>
+      <div class="sub">Gestão financeira do escritório · v6</div>
     </div>
     <nav class="nav" id="nav">
       <div class="nav-group">Operação</div>
@@ -261,7 +261,7 @@ td.c,th.c{text-align:center}
 </div>
 <div class="login" id="login" style="display:none">
   <div class="box">
-    <h2>Financeiro do escritório <span class="tag t-brass" style="vertical-align:middle;font-size:11px">v5</span></h2>
+    <h2>Financeiro do escritório <span class="tag t-brass" style="vertical-align:middle;font-size:11px">v6</span></h2>
     <div class="sb" id="lgSub">Os dados ficam no Google Sheets da sua conta e são compartilhados por toda a equipe.</div>
     <div class="f" id="lgUrlBox"><label class="f">Endereço do sistema (URL /exec do Apps Script)</label><input class="inp" id="lgUrl" placeholder="https://script.google.com/macros/s/.../exec"></div>
     <div id="lgCreds"></div>
@@ -277,17 +277,30 @@ td.c,th.c{text-align:center}
    NÚCLEO — API (Apps Script), sincronização e utilidades
    ============================================================ */
 const LS_URL='fin_adv_url', LS_TOKEN='fin_adv_token', LS_USER='fin_adv_user', LS_CACHE='fin_adv_cache';
-let API_URL=(typeof URL_SISTEMA!=='undefined'&&URL_SISTEMA)||localStorage.getItem(LS_URL)||'', TOKEN=localStorage.getItem(LS_TOKEN)||'', USUARIO=null;
-const URL_FIXA=(typeof URL_SISTEMA!=='undefined'&&!!URL_SISTEMA);
+const LS={get(k){try{return localStorage.getItem(k)}catch(e){return null}},
+          set(k,v){try{localStorage.setItem(k,v)}catch(e){}},
+          del(k){try{localStorage.removeItem(k)}catch(e){}}};
+/* servido pelo próprio Apps Script? então não existe endereço para digitar */
+const EMBUTIDO=(typeof google!=='undefined'&&google.script&&google.script.run);
+let API_URL=(typeof URL_SISTEMA!=='undefined'&&URL_SISTEMA)||LS.get(LS_URL)||'', TOKEN=LS.get(LS_TOKEN)||'', USUARIO=null;
+const URL_FIXA=EMBUTIDO||(typeof URL_SISTEMA!=='undefined'&&!!URL_SISTEMA);
 const DIRETO=(typeof ENTRADA_DIRETA!=='undefined'&&ENTRADA_DIRETA===true);
 let RELOGANDO=false;
-try{ USUARIO=JSON.parse(localStorage.getItem(LS_USER)||'null'); }catch(e){}
+try{ USUARIO=JSON.parse(LS.get(LS_USER)||'null'); }catch(e){}
 
 async function api(acao,dados,silencioso){
-  if(!API_URL) throw new Error('Sistema não conectado');
   const corpo=Object.assign({acao,token:TOKEN},dados||{});
-  const r=await fetch(API_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(corpo),redirect:'follow'});
-  const txt=await r.text();
+  let txt;
+  if(EMBUTIDO){
+    txt=await new Promise((ok,err)=>google.script.run
+      .withSuccessHandler(ok)
+      .withFailureHandler(e=>err(new Error((e&&e.message)||'Falha no servidor')))
+      .apiWeb(JSON.stringify(corpo)));
+  } else {
+    if(!API_URL) throw new Error('Sistema não conectado');
+    const r=await fetch(API_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(corpo),redirect:'follow'});
+    txt=await r.text();
+  }
   let j; try{ j=JSON.parse(txt); }catch(e){ throw new Error('Resposta inesperada do servidor. Confira a URL /exec e se a implantação está como “Qualquer pessoa”.'); }
   if(j&&j.erro==='sessao'){
     if(DIRETO&&!RELOGANDO){ RELOGANDO=true; const ok=await autoEntrar(); RELOGANDO=false; if(ok) return api(acao,dados,silencioso); }
@@ -415,7 +428,7 @@ function calcularDiff(){
 function fixarSnapshot(at){
   const base=at||achatar(); SNAP={};
   TABELAS.forEach(t=>{ SNAP[t]={}; (base[t]||[]).forEach(r=>SNAP[t][r.id]=limpo(r)); });
-  localStorage.setItem(LS_CACHE,JSON.stringify({DB,ULTIMO_SYNC}));
+  LS.set(LS_CACHE,JSON.stringify({DB,ULTIMO_SYNC}));
 }
 function statusSync(cor,txt){ const d=el('syncDot'), t=el('syncTxt'); if(d) d.className='dot '+(cor||''); if(t) t.textContent=txt; }
 
@@ -441,7 +454,7 @@ async function sincronizar(forcarPuxar){
     statusSync('', 'sincronizado '+new Date().toLocaleTimeString('pt-BR').slice(0,5));
   }catch(e){
     statusSync('r','sem conexão — alterações guardadas');
-    localStorage.setItem(LS_CACHE,JSON.stringify({DB,ULTIMO_SYNC}));
+    LS.set(LS_CACHE,JSON.stringify({DB,ULTIMO_SYNC}));
   }finally{
     SINCRONIZANDO=false;
     if(PENDENTE){ PENDENTE=false; setTimeout(()=>sincronizar(false),400); }
@@ -496,7 +509,7 @@ function aplicarRemoto(tab){
 }
 /* save() continua sendo chamado por todo o sistema: agenda a sincronização */
 function save(){
-  localStorage.setItem(LS_CACHE,JSON.stringify({DB,ULTIMO_SYNC}));
+  LS.set(LS_CACHE,JSON.stringify({DB,ULTIMO_SYNC}));
   refreshBadges();
   statusSync('b','salvando…');
   clearTimeout(TIMER); TIMER=setTimeout(()=>sincronizar(false),700);
@@ -616,7 +629,7 @@ async function trocarSenha(){
   catch(e){ toast(e.message,'err'); }
 }
 function sair(semConfirmar){
-  const fim=()=>{ localStorage.removeItem(LS_TOKEN); localStorage.removeItem(LS_USER); TOKEN=''; USUARIO=null; location.reload(); };
+  const fim=()=>{ LS.del(LS_TOKEN); LS.del(LS_USER); TOKEN=''; USUARIO=null; location.reload(); };
   if(DIRETO) return fim();
   if(semConfirmar) return fim();
   confirma('Sair do sistema neste computador?',fim);
@@ -1743,7 +1756,7 @@ function viewConfig(){
     </div>
     <div class="card-b" style="border-top:1px solid var(--line-2)">
       <div class="small mut">${DB.lancamentos.length} acordos · ${DB.extrato.length} movimentos de extrato · ${DB.pagar.length} contas a pagar · ${DB.comissoes.length} comissões · ${(DB.anexos||[]).length} arquivos no Drive</div>
-      <div class="tiny" style="margin-top:6px">Conectado em ${esc(API_URL)}</div>
+      <div class="tiny" style="margin-top:6px">${EMBUTIDO?'Servido pelo próprio Apps Script':'Conectado em '+esc(API_URL)}</div>
     </div>
   </div>`;
 }
@@ -1853,10 +1866,10 @@ function carregarDemo(){
 function mostrarLogin(msg){
   el('login').style.display='flex';
   el('lgUrl').value=API_URL||'';
-  el('lgVer').textContent='Entrada direta: '+(DIRETO?'ligada':'desligada')+' · endereço no código: '+(URL_FIXA?'sim':'não');
+  el('lgVer').textContent='v6 · entrada direta: '+(DIRETO?'ligada':'desligada')+' · servido pelo Apps Script: '+(EMBUTIDO?'sim':'não')+' · endereço no código: '+(URL_FIXA?'sim':'não');
   if(DIRETO){
     el('lgCreds').innerHTML='';
-    el('lgUrlBox').style.display='';
+    el('lgUrlBox').style.display=EMBUTIDO?'none':'';
     el('lgBtn').textContent='Conectar';
     el('lgSub').textContent='Cole o endereço do sistema uma única vez. Depois disso este computador entra sozinho, sem pedir mais nada.';
   } else {
@@ -1875,7 +1888,7 @@ async function entrar(){
       ?'A URL_SISTEMA no topo do index.html não é uma URL /exec válida.'
       :'Cole a URL que termina em /exec')+'</span>';
   el('lgMsg').innerHTML='<span class="tag t-gray">Conectando…</span>';
-  API_URL=url; localStorage.setItem(LS_URL,url);
+  API_URL=url; LS.set(LS_URL,url);
   if(DIRETO){
     try{ await api('ping'); }catch(e){ return el('lgMsg').innerHTML='<span class="tag t-red">'+esc(e.message)+'</span>'; }
     if(!(await autoEntrar()))
@@ -1886,18 +1899,18 @@ async function entrar(){
   try{
     const r=await api('login',{email:mail,senha});
     TOKEN=r.token; USUARIO=r.usuario;
-    localStorage.setItem(LS_TOKEN,TOKEN); localStorage.setItem(LS_USER,JSON.stringify(USUARIO));
+    LS.set(LS_TOKEN,TOKEN); LS.set(LS_USER,JSON.stringify(USUARIO));
     el('login').style.display='none';
     await iniciar();
   }catch(e){ el('lgMsg').innerHTML='<span class="tag t-red">'+esc(e.message)+'</span>'; }
 }
 async function autoEntrar(){
-  if(!DIRETO||!API_URL) return false;
+  if(!DIRETO||(!EMBUTIDO&&!API_URL)) return false;
   try{
     const r=await api('login',{email:EMAIL_PADRAO,senha:SENHA_PADRAO},true);
     if(!r||!r.ok) return false;
     TOKEN=r.token; USUARIO=r.usuario;
-    localStorage.setItem(LS_TOKEN,TOKEN); localStorage.setItem(LS_USER,JSON.stringify(USUARIO));
+    LS.set(LS_TOKEN,TOKEN); LS.set(LS_USER,JSON.stringify(USUARIO));
     return true;
   }catch(e){ return false; }
 }
@@ -1906,7 +1919,7 @@ el('lgUrl').addEventListener('keydown',e=>{ if(e.key==='Enter') entrar(); });
 
 async function iniciar(){
   DB=dbVazio();
-  try{ const c=JSON.parse(localStorage.getItem(LS_CACHE)||'null');
+  try{ const c=JSON.parse(LS.get(LS_CACHE)||'null');
     if(c&&c.DB&&c.DB.lancamentos){ DB=c.DB; ULTIMO_SYNC=''; } }catch(e){}
   DB.anexos=DB.anexos||[];
   el('brandName').textContent=DB.cfg.nome||'Financeiro';
@@ -1950,7 +1963,7 @@ function fixarSnapshotVazioParaSemear(){
 }
 (async function(){
   if(DIRETO){
-    if(!API_URL) return mostrarLogin('Falta o endereço do Apps Script. Cole abaixo — ou preencha URL_SISTEMA na linha 13 do index.html para nunca mais precisar.');
+    if(!EMBUTIDO&&!API_URL) return mostrarLogin('Falta o endereço do Apps Script. Cole abaixo — ou preencha URL_SISTEMA na linha 13 do index.html para nunca mais precisar.');
     try{ await api('ping'); }catch(e){ return mostrarLogin(e.message); }
     if(!TOKEN&&!(await autoEntrar()))
       return mostrarLogin('Não consegui entrar com o usuário configurado no index.html. Confira EMAIL_PADRAO e SENHA_PADRAO.');
