@@ -246,12 +246,13 @@ td.c,th.c{text-align:center}
 <div class="login" id="login" style="display:none">
   <div class="box">
     <h2>Financeiro do escritório</h2>
-    <div class="sb">Os dados ficam no Google Sheets da sua conta e são compartilhados por toda a equipe.</div>
+    <div class="sb" id="lgSub">Os dados ficam no Google Sheets da sua conta e são compartilhados por toda a equipe.</div>
     <div class="f" id="lgUrlBox"><label class="f">Endereço do sistema (URL /exec do Apps Script)</label><input class="inp" id="lgUrl" placeholder="https://script.google.com/macros/s/.../exec"></div>
-    <div class="f"><label class="f">E-mail</label><input class="inp" id="lgMail" autocomplete="username" value=""></div>
-    <div class="f"><label class="f">Senha</label><input class="inp" type="password" id="lgSenha" autocomplete="current-password"></div>
+    <div class="f" id="lgMailBox"><label class="f">E-mail</label><input class="inp" id="lgMail" autocomplete="username" value=""></div>
+    <div class="f" id="lgSenhaBox"><label class="f">Senha</label><input class="inp" type="password" id="lgSenha" autocomplete="current-password"></div>
     <button class="btn primary" style="width:100%;justify-content:center;margin-top:18px" id="lgBtn">Entrar</button>
     <div class="small" id="lgMsg" style="margin-top:12px;min-height:18px"></div>
+    <div class="tiny" id="lgVer" style="margin-top:14px"></div>
   </div>
 </div>
 <div class="ov" id="ov"><div class="modal" id="modal"></div></div>
@@ -1837,10 +1838,19 @@ function carregarDemo(){
 function mostrarLogin(msg){
   el('login').style.display='flex';
   el('lgUrl').value=API_URL||'';
-  if(URL_FIXA) el('lgUrlBox').style.display='none';
-  el('lgMail').value=(USUARIO&&USUARIO.email)||'';
+  el('lgVer').textContent='Entrada direta: '+(DIRETO?'ligada':'desligada')+' · endereço no código: '+(URL_FIXA?'sim':'não');
+  if(DIRETO){
+    el('lgMailBox').style.display='none';
+    el('lgSenhaBox').style.display='none';
+    el('lgUrlBox').style.display='';
+    el('lgBtn').textContent='Conectar';
+    el('lgSub').textContent='Cole o endereço do sistema uma única vez. Depois disso este computador entra sozinho, sem pedir mais nada.';
+  } else {
+    if(URL_FIXA) el('lgUrlBox').style.display='none';
+    el('lgMail').value=(USUARIO&&USUARIO.email)||'';
+  }
   if(msg) el('lgMsg').innerHTML='<span class="tag t-red">'+esc(msg)+'</span>';
-  setTimeout(()=>{ const c=el(URL_FIXA?(el('lgMail').value?'lgSenha':'lgMail'):'lgUrl'); if(c&&c.focus) c.focus(); },80);
+  setTimeout(()=>{ const c=el(DIRETO?'lgUrl':(URL_FIXA?(el('lgMail').value?'lgSenha':'lgMail'):'lgUrl')); if(c&&c.focus) c.focus(); },80);
 }
 async function entrar(){
   const url=(URL_FIXA?URL_SISTEMA:val('lgUrl')).replace(/\s/g,''), mail=val('lgMail'), senha=val('lgSenha');
@@ -1850,6 +1860,13 @@ async function entrar(){
       :'Cole a URL que termina em /exec')+'</span>';
   el('lgMsg').innerHTML='<span class="tag t-gray">Conectando…</span>';
   API_URL=url; localStorage.setItem(LS_URL,url);
+  if(DIRETO){
+    try{ await api('ping'); }catch(e){ return el('lgMsg').innerHTML='<span class="tag t-red">'+esc(e.message)+'</span>'; }
+    if(!(await autoEntrar()))
+      return el('lgMsg').innerHTML='<span class="tag t-red">Conectou no servidor, mas o usuário '+esc(EMAIL_PADRAO)+' foi recusado. Confira EMAIL_PADRAO e SENHA_PADRAO no index.html, ou rode a função instalar() no Apps Script.</span>';
+    el('login').style.display='none';
+    return iniciar();
+  }
   try{
     const r=await api('login',{email:mail,senha});
     TOKEN=r.token; USUARIO=r.usuario;
@@ -1917,7 +1934,7 @@ function fixarSnapshotVazioParaSemear(){
 }
 (async function(){
   if(DIRETO){
-    if(!API_URL) return mostrarLogin('Preencha a URL_SISTEMA no topo do index.html.');
+    if(!API_URL) return mostrarLogin('Falta o endereço do Apps Script. Cole abaixo — ou preencha URL_SISTEMA na linha 13 do index.html para nunca mais precisar.');
     try{ await api('ping'); }catch(e){ return mostrarLogin(e.message); }
     if(!TOKEN&&!(await autoEntrar()))
       return mostrarLogin('Não consegui entrar com o usuário configurado no index.html. Confira EMAIL_PADRAO e SENHA_PADRAO.');
