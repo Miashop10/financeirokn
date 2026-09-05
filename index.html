@@ -396,6 +396,10 @@ function selMes(id, valor){
 }
 
 /* ── ATALHOS AOS DADOS ── */
+function pastaCliente(pasta, cliente){
+  const a = '<b>'+esc(pasta||'—')+'</b>';
+  return cliente ? a + ' <span style="color:var(--ink3)">·</span> <b>'+esc(cliente)+'</b>' : a;
+}
 const lancDe = id => (DB.LANCAMENTOS||[]).find(l => l.ID === id) || {};
 const parcDe = id => (DB.PARCELAS||[]).find(p => p.ID === id) || null;
 const nomeComissionado = id => ((DB.COMISSIONADOS||[]).find(c => c.ID === id) || {}).NOME || '—';
@@ -404,11 +408,11 @@ const tarifaPadrao = () => n(cfg('TARIFA_PADRAO','2,50')) || 2.5;
 let CFGABA = 'filiais';
 function abrirConfig(aba){
   CFGABA = aba || CFGABA;
-  const abas = [['filiais','Filiais'],['usuarios','Usuários'],['subclasses','Subclasses'],
+  const abas = [['filiais','Filiais'],['pracas','Praças'],['subclasses','Subclasses'],['usuarios','Usuários'],
                 ['comissionados','Comissionados'],['regras','Regras de comissão'],['geral','Geral']];
   const menu = '<div class="subtabs">' + abas.map(([k,t]) =>
     '<button class="'+(CFGABA===k?'on':'')+'" onclick="abrirConfig(\''+k+'\')">'+t+'</button>').join('') + '</div>';
-  const corpo = { filiais:cfgFiliais, usuarios:cfgUsuarios, subclasses:cfgSubclasses,
+  const corpo = { filiais:cfgFiliais, pracas:cfgPracas, usuarios:cfgUsuarios, subclasses:cfgSubclasses,
                   comissionados:cfgComissionados, regras:cfgRegras, geral:cfgGeral }[CFGABA]();
   modal('Configurações', menu + corpo, '<button class="btn sec" onclick="fecharModal()">Fechar</button>', 'larga');
 }
@@ -484,7 +488,9 @@ async function gravarUsuario(id){
 function cfgSubclasses(){
   const L = (DB.SUBCLASSES||[]);
   const linhas = L.length ? L.map(s =>
-    '<tr><td><b>'+esc(s.NOME)+'</b></td><td style="text-align:right"><button class="btn sm per" onclick="apagarReg(\'SUBCLASSES\',\''+s.ID+'\',\''+esc(s.NOME)+'\',\'subclasses\')">Excluir</button></td></tr>').join('')
+    '<tr><td><b>'+esc(s.NOME)+'</b></td><td style="text-align:right;white-space:nowrap">'
+    + '<button class="btn sm sec" onclick="formSubclasse(\''+s.ID+'\')">Editar</button> '
+    + '<button class="btn sm per" onclick="apagarReg(\'SUBCLASSES\',\''+s.ID+'\',\''+esc(s.NOME)+'\',\'subclasses\')">Excluir</button></td></tr>').join('')
     : '<tr><td colspan="2" class="vazio">Nenhuma subclasse. As subclasses classificam os lançamentos e definem quais geram comissão.</td></tr>';
   return '<div style="display:flex;gap:8px;margin-bottom:12px;align-items:flex-end">'
     + '<div class="campo" style="flex:1;margin:0"><label>Nova subclasse</label><input id="novaSub" placeholder="Ex.: Acordo trabalhista"></div>'
@@ -494,6 +500,48 @@ function cfgSubclasses(){
 async function addSubclasse(){
   const nome = val('novaSub'); if (!nome) return toast('Informe o nome da subclasse.','erro');
   await salvar('SUBCLASSES', {ID:'', NOME:nome}); abrirConfig('subclasses');
+}
+function formSubclasse(id){
+  const s = (DB.SUBCLASSES||[]).find(x => x.ID === id) || {};
+  modal('Editar subclasse', '<div class="grade">' + inp('sbNome','Nome da subclasse', s.NOME, 'full') + '</div>'
+    + '<p class="mini" style="margin-top:8px">Ao renomear, as regras de comissão desta subclasse são atualizadas junto.</p>',
+    '<button class="btn sec" onclick="abrirConfig(\'subclasses\')">Cancelar</button><button class="btn" onclick="gravarSubclasse(\''+id+'\',\''+esc(s.NOME)+'\')">Salvar</button>', 'estreita');
+}
+async function gravarSubclasse(id, antigo){
+  const nome = val('sbNome'); if (!nome) return toast('Informe o nome da subclasse.','erro');
+  const lote = [{aba:'SUBCLASSES', registro:{ID:id, NOME:nome}}];
+  (DB.REGRAS_COMISSAO||[]).filter(r => r.SUBCLASSE === antigo).forEach(r =>
+    lote.push({aba:'REGRAS_COMISSAO', registro: Object.assign({}, r, {SUBCLASSE:nome})}));
+  (DB.LANCAMENTOS||[]).filter(l => l.SUBCLASSE === antigo).forEach(l =>
+    lote.push({aba:'LANCAMENTOS', registro: Object.assign({}, l, {SUBCLASSE:nome})}));
+  carregandoOn('Salvando…');
+  try{ await salvarLote(lote); abrirConfig('subclasses'); render(); toast('Subclasse atualizada.','ok'); }
+  catch(e){ toast(e.message,'erro'); } finally{ carregandoOff(); }
+}
+
+/* Praças */
+function cfgPracas(){
+  const L = (DB.PRACAS||[]);
+  const linhas = L.length ? L.map(f =>
+    '<tr><td><b>'+esc(f.NOME)+'</b></td><td>'+esc(f.UF||'—')+'</td>'
+    + '<td><span class="tag '+(f.ATIVO==='NAO'?'t-neutro':'t-ok')+'">'+(f.ATIVO==='NAO'?'Inativa':'Ativa')+'</span></td>'
+    + '<td style="text-align:right;white-space:nowrap"><button class="btn sm sec" onclick="formPraca(\''+f.ID+'\')">Editar</button> '
+    + '<button class="btn sm per" onclick="apagarReg(\'PRACAS\',\''+f.ID+'\',\''+esc(f.NOME)+'\',\'pracas\')">Excluir</button></td></tr>').join('')
+    : '<tr><td colspan="4" class="vazio">Nenhuma praça cadastrada. Só as praças daqui aparecem na hora de lançar um acordo.</td></tr>';
+  return '<div style="display:flex;margin-bottom:12px"><button class="btn" onclick="formPraca()">Nova praça</button></div>'
+    + tabelaSimples([{t:'Praça'},{t:'UF'},{t:'Situação'},{t:''}], linhas);
+}
+function formPraca(id){
+  const f = (DB.PRACAS||[]).find(x => x.ID === id) || {};
+  modal(id ? 'Editar praça' : 'Nova praça',
+    '<div class="grade">' + inp('prNome','Nome da praça', f.NOME, 'full') + inp('prUf','UF', f.UF)
+    + '<div class="campo"><label>Situação</label><select id="prAtivo"><option value="SIM">Ativa</option><option value="NAO"'+(f.ATIVO==='NAO'?' selected':'')+'>Inativa</option></select></div></div>',
+    '<button class="btn sec" onclick="abrirConfig(\'pracas\')">Cancelar</button><button class="btn" onclick="gravarPraca(\''+(id||'')+'\')">Salvar praça</button>', 'estreita');
+}
+async function gravarPraca(id){
+  if (!val('prNome')) return toast('Informe o nome da praça.','erro');
+  await salvar('PRACAS', {ID:id||'', NOME:val('prNome'), UF:val('prUf').toUpperCase(), ATIVO:val('prAtivo')});
+  abrirConfig('pracas'); render();
 }
 
 /* Comissionados */
@@ -599,7 +647,7 @@ function telaLancamentos(){
     const totRec = recb.reduce((s,p) => s + n(p.VALOR_CREDITADO || p.VALOR), 0);
     const tot = ps.reduce((s,p) => s + n(p.VALOR), 0);
     const pct = tot ? Math.round(totRec/tot*100) : 0;
-    return '<tr><td><b>'+esc(l.PASTA||'—')+'</b><div class="mini">'+esc(l.CLIENTE||'')+'</div></td>'
+    return '<tr><td>'+pastaCliente(l.PASTA, l.CLIENTE)+'</td>'
       + '<td>'+esc(l.N_PROCESSO||'—')+'<div class="mini">'+esc(l.PRACA||'')+'</div></td>'
       + '<td>'+esc(l.SUBCLASSE||'—')+(l.EXEZ==='SIM'?' <span class="tag t-neutro">EXEZ</span>':'')+'</td>'
       + '<td class="num">'+nMoeda(l.VALOR_TOTAL)+'</td>'
@@ -632,15 +680,29 @@ function formLanc(id){
                     .map(p => ({ID:p.ID, VENCIMENTO:p.VENCIMENTO, VALOR:n(p.VALOR), STATUS:p.STATUS}))
                 : [];
   const subs = [['','— selecione —']].concat((DB.SUBCLASSES||[]).map(s => [s.NOME, s.NOME]));
-  const fils = [['','— sem filial —']].concat((DB.FILIAIS||[]).filter(f => f.ATIVO !== 'NAO').map(f => [f.NOME, f.NOME]));
+  const fils = [['','— selecione —']].concat((DB.FILIAIS||[]).filter(f => f.ATIVO !== 'NAO').map(f => [f.NOME, f.NOME]));
+  const prcs = [['','— selecione —']].concat((DB.PRACAS||[]).filter(f => f.ATIVO !== 'NAO')
+                 .map(f => [f.NOME, f.NOME + (f.UF ? ' / ' + f.UF : '')]));
+  // valor gravado que já não existe mais no cadastro continua visível para não sumir do lançamento
+  [[prcs, l.PRACA], [fils, l.FILIAL], [subs, l.SUBCLASSE]].forEach(([lista, v]) => {
+    if (v && !lista.some(o => o[0] === v)) lista.push([v, v + ' (fora do cadastro)']);
+  });
+  const faltando = [];
+  if (!(DB.PRACAS||[]).length) faltando.push('praças');
+  if (!(DB.FILIAIS||[]).length) faltando.push('filiais');
+  if (!(DB.SUBCLASSES||[]).length) faltando.push('subclasses');
+  const aviso = faltando.length
+    ? '<div class="erro" style="margin-bottom:14px">Ainda não há '+faltando.join(', ')+' no cadastro. '
+      + '<button class="btn sm sec" onclick="abrirConfig(\''+(faltando[0]==='praças'?'pracas':faltando[0]==='filiais'?'filiais':'subclasses')+'\')">Abrir cadastro</button></div>'
+    : '';
 
   modal(id ? 'Editar lançamento' : 'Novo lançamento',
-    '<div class="grade">'
+    aviso + '<div class="grade">'
     + inp('lcPasta','Pasta', l.PASTA)
     + inp('lcCliente','Cliente', l.CLIENTE)
     + inp('lcDoc','CPF / CNPJ do cliente', l.DOC)
     + inp('lcProc','Nº do processo', l.N_PROCESSO)
-    + inp('lcPraca','Praça', l.PRACA)
+    + sel('lcPraca','Praça', prcs, l.PRACA)
     + sel('lcFilial','Filial', fils, l.FILIAL)
     + sel('lcSub','Subclasse', subs, l.SUBCLASSE)
     + '<div class="check"><input type="checkbox" id="lcExez"'+(l.EXEZ==='SIM'?' checked':'')+'><label for="lcExez">Cálculo feito pela EXEZ</label></div>'
@@ -652,8 +714,9 @@ function formLanc(id){
     + inp('lcPctCli','% do cliente', l.PCT_CLIENTE || '70', '', 'number', 'step="0.01" oninput="espelhaPct(1)"')
     + inp('lcPctEsc','% do escritório', l.PCT_ESCRITORIO || '30', '', 'number', 'step="0.01" oninput="espelhaPct(2)"')
     + inp('lcSuc','Honorários de sucumbência (R$)', l.SUCUMBENCIA ? nMoeda(l.SUCUMBENCIA) : '')
-    + '<div class="check"><input type="checkbox" id="lcTarifa"'+(l.TARIFA_ATIVA!=='NAO'?' checked':'')+'><label for="lcTarifa">Deduzir tarifa bancária do cliente</label></div>'
+    + '<div class="check"><input type="checkbox" id="lcTarifa"'+(l.TARIFA_ATIVA!=='NAO'?' checked':'')+'><label for="lcTarifa">Deduzir tarifa bancária da parte do cliente</label></div>'
     + inp('lcTarifaV','Valor da tarifa por parcela (R$)', l.TARIFA_VALOR ? nMoeda(l.TARIFA_VALOR) : nMoeda(tarifaPadrao()))
+    + '<p class="mini full" style="margin:-4px 0 2px">A tarifa é descontada da parte do cliente em cada parcela e passa para o escritório. Ela não entra na base de cálculo das comissões.</p>'
 
     + '<div class="secao-form">Vencimento e valor de cada parcela</div>'
     + '<div class="full" id="boxParcelas"></div>'
@@ -923,7 +986,7 @@ function listaConciliados(L){
     + '<thead><tr><th>Data</th><th>Identificação</th><th class="num">Valor</th><th>Pasta / cliente</th><th class="num">Cliente</th><th class="num">Escritório</th><th></th></tr></thead><tbody>'
     + F.map(m => { const p = parcDe(m.PARCELA_ID) || {}; const l = lancDe(p.LANC_ID);
         return '<tr>' + linhaMov(m)
-          + '<td>'+esc(l.PASTA||'—')+'<div class="mini">'+esc(l.CLIENTE||'')+'</div></td>'
+          + '<td>'+pastaCliente(l.PASTA, l.CLIENTE)+'</td>'
           + '<td class="num">'+nMoeda(p.VALOR_CLIENTE)+'</td><td class="num">'+nMoeda(p.VALOR_ESCRITORIO)+'</td>'
           + '<td style="text-align:right"><button class="btn sm sec" onclick="desfazer(\''+m.ID+'\')">Desfazer</button></td></tr>'; }).join('')
     + '</tbody></table></div></div>';
@@ -953,7 +1016,9 @@ async function conciliar(movId, parcId){
   const valor = Math.abs(n(m.VALOR));
   const suc = p.TIPO === 'Sucumbência';
   const tarifa = (!suc && l.TARIFA_ATIVA !== 'NAO') ? rd(n(l.TARIFA_VALOR) || tarifaPadrao()) : 0;
-  const vEsc = suc ? valor : rd(valor * n(l.PCT_ESCRITORIO) / 100);
+  // base de comissão = parte do escritório SEM a tarifa; a tarifa sai do cliente e entra no escritório
+  const baseCom = suc ? valor : rd(valor * n(l.PCT_ESCRITORIO) / 100);
+  const vEsc = rd(baseCom + tarifa);
   const vCli = suc ? 0 : rd(valor * n(l.PCT_CLIENTE) / 100 - tarifa);
 
   const lote = [];
@@ -968,23 +1033,24 @@ async function conciliar(movId, parcId){
       ID:cpId, DESCRICAO:'Repasse ao cliente — pasta '+(l.PASTA||'—')+(p.NUM>0?' · parcela '+p.NUM:''),
       FAVORECIDO:l.CLIENTE||'', CATEGORIA:'Repasse a cliente', VENCIMENTO:m.DATA, VALOR:vCli,
       STATUS:'Em aberto', DATA_PGTO:'', ORIGEM:'Conciliação automática', PARCELA_ID:p.ID, ANEXO_URL:'',
-      OBS:'Gerado na conciliação de '+moeda(valor)+(tarifa?' · tarifa de '+moeda(tarifa)+' deduzida':'') }});
+      OBS:'Gerado na conciliação de '+moeda(valor)+(tarifa?' · tarifa de '+moeda(tarifa)+' deduzida e revertida ao escritório':'') }});
   }
 
   // comissões sobre o valor do escritório (tarifa fora da base)
   const regras = (DB.REGRAS_COMISSAO||[]).filter(r => r.SUBCLASSE && r.SUBCLASSE === l.SUBCLASSE);
   regras.forEach(r => {
-    const v = rd(vEsc * n(r.PCT) / 100);
+    const v = rd(baseCom * n(r.PCT) / 100);
     if (v <= 0) return;
     lote.push({aba:'COMISSOES', registro:{ ID:uid('co'), PARCELA_ID:p.ID, LANC_ID:l.ID, CLIENTE:l.CLIENTE||'',
-      COMISSIONADO_ID:r.COMISSIONADO_ID, BASE:vEsc, PCT:n(r.PCT), VALOR:v, STATUS:'A pagar', DATA:m.DATA, CP_ID:'' }});
+      COMISSIONADO_ID:r.COMISSIONADO_ID, BASE:baseCom, PCT:n(r.PCT), VALOR:v, STATUS:'A pagar', DATA:m.DATA, CP_ID:'' }});
   });
 
   carregandoOn('Conciliando…');
   try{
     await salvarLote(lote);
     render();
-    toast('Conciliado. ' + (vCli > 0 ? moeda(vCli)+' lançado em contas a pagar para o cliente.' : 'Valor integral do escritório.'), 'ok');
+    toast('Conciliado. ' + (vCli > 0 ? moeda(vCli)+' para o cliente em contas a pagar · '+moeda(vEsc)+' para o escritório.'
+                                     : 'Valor integral do escritório.'), 'ok');
   }catch(e){ toast(e.message,'erro'); } finally{ carregandoOff(); }
 }
 async function desfazer(movId){
@@ -1067,6 +1133,11 @@ function formImportar(){
   modal('Importar extrato bancário',
     '<div class="campo"><label for="impArq">Arquivo do banco (OFX, OFC, Excel, CSV ou PDF)</label>'
     + '<input type="file" id="impArq" accept=".ofx,.ofc,.qfx,.xlsx,.xls,.csv,.txt,.pdf" onchange="lerArquivo(this)"></div>'
+    + '<div class="campo"><label for="impTexto">Ou cole o extrato aqui — data, descrição e valor</label>'
+    + '<textarea id="impTexto" rows="7" placeholder="03/09/2026&#9;TED RECEBIDA MARIA SOUZA&#9;1.000,00&#10;04/09/2026&#9;TARIFA PACOTE&#9;-25,00" '
+    + 'style="font-family:\'IBM Plex Mono\',monospace;font-size:12.5px"></textarea>'
+    + '<p class="mini" style="margin-top:5px">Cole direto do Excel ou do site do banco. Serve separado por tabulação, ponto e vírgula ou espaços. '
+    + 'Valor negativo ou com D no fim é débito. <button class="btn sm sec" onclick="lerColado()">Ler texto colado</button></p></div>'
     + '<div class="campo"><label for="impBanco">Banco / conta (opcional)</label><input id="impBanco" placeholder="Ex.: Itaú 1234-5"></div>'
     + '<div id="impPrevia"><p class="mini">O sistema lê data, identificação e valor. Movimentos já importados são ignorados automaticamente.</p></div>',
     '<button class="btn sec" onclick="fecharModal()">Cancelar</button><button class="btn" id="btnImp" disabled onclick="confirmarImport()">Importar movimentos</button>',
@@ -1166,6 +1237,34 @@ function parseLinhas(txt){
   });
   return out;
 }
+function lerColado(){
+  const txt = (document.getElementById('impTexto')||{}).value || '';
+  if (!txt.trim()){ toast('Cole o extrato na caixa de texto.','erro'); return; }
+  try{
+    const linhas = parseColado(txt);
+    if (!linhas.length){
+      $('#impPrevia').innerHTML = '<div class="erro">Nenhum movimento reconhecido. Cada linha precisa de uma data e um valor — por exemplo: 03/09/2026 TED RECEBIDA 1.000,00</div>';
+      $('#btnImp').disabled = true; return;
+    }
+    previaImport(linhas);
+  }catch(e){ $('#impPrevia').innerHTML = '<div class="erro">'+esc(e.message)+'</div>'; }
+}
+function parseColado(txt){
+  const linhas = txt.split(/\r?\n/).filter(l => l.trim());
+  const sep = linhas.filter(l => l.includes('\t')).length >= linhas.length/2 ? '\t'
+            : linhas.filter(l => l.includes(';')).length >= linhas.length/2 ? ';' : null;
+  if (sep){
+    const rows = linhas.map(l => l.split(sep).map(c => c.replace(/^"|"$/g,'').trim()));
+    const r = parseTabela(rows);
+    if (r.length) return r;
+  }
+  const r2 = parseLinhas(txt);
+  if (r2.length) return r2;
+  // último recurso: separado por 2+ espaços
+  const rows = linhas.map(l => l.trim().split(/\s{2,}/));
+  return parseTabela(rows);
+}
+
 function previaImport(linhas){
   const existentes = new Set((DB.EXTRATO||[]).map(m => m.HASH));
   const vistos = new Set();
@@ -1205,6 +1304,13 @@ async function confirmarImport(){
   }catch(e){ toast(e.message,'erro'); } finally{ carregandoOff(); }
 }
 /* ══════════════════ CONTAS A RECEBER ══════════════════ */
+/* tarifa aplicável a uma parcela (sai do cliente e vai para o escritório) */
+function tarifaDe(p, l){
+  if (p.TIPO === 'Sucumbência') return 0;
+  if (!l || l.TARIFA_ATIVA === 'NAO') return 0;
+  return rd(n(l.TARIFA_VALOR) || tarifaPadrao());
+}
+
 function telaReceber(){
   const t = FILTROS.busca, mes = FILTROS.fMesR || '', sit = FILTROS.fSit || '';
   const hj = hoje();
@@ -1212,7 +1318,8 @@ function telaReceber(){
     const l = lancDe(p.LANC_ID);
     return {id:p.ID, tipo:'parcela', pasta:l.PASTA, cliente:l.CLIENTE, proc:l.N_PROCESSO, praca:l.PRACA,
             desc:p.TIPO + (p.NUM>0?' '+p.NUM+'/'+l.QTD_PARCELAS:''), venc:p.VENCIMENTO, valor:n(p.VALOR),
-            cli:rd(n(p.VALOR)*n(l.PCT_CLIENTE)/100), esc:rd(n(p.VALOR)*n(l.PCT_ESCRITORIO)/100), lanc:l.ID};
+            cli:rd(n(p.VALOR)*n(l.PCT_CLIENTE)/100 - tarifaDe(p,l)),
+            esc:rd(n(p.VALOR)*n(l.PCT_ESCRITORIO)/100 + tarifaDe(p,l)), lanc:l.ID};
   });
   (DB.CONTAS_RECEBER||[]).filter(c => c.STATUS !== 'Recebido').forEach(c =>
     L.push({id:c.ID, tipo:'avulso', pasta:'—', cliente:c.CLIENTE, proc:'', praca:'', desc:c.DESCRICAO,
@@ -1232,15 +1339,15 @@ function telaReceber(){
     + '<div class="kpis">'
     + kpi('Em aberto', moeda(total), L.length + ' lançamento(s)', 'd')
     + kpi('Vencidas', moeda(vencidas.reduce((s,r)=>s+r.valor,0)), vencidas.length + ' em atraso', vencidas.length ? 'n' : '')
-    + kpi('Parte do cliente', moeda(L.reduce((s,r)=>s+r.cli,0)), 'repasse previsto', 'b')
-    + kpi('Parte do escritório', moeda(L.reduce((s,r)=>s+r.esc,0)), 'receita prevista', 'p')
+    + kpi('Parte do cliente', moeda(L.reduce((s,r)=>s+r.cli,0)), 'repasse previsto, já sem a tarifa', 'b')
+    + kpi('Parte do escritório', moeda(L.reduce((s,r)=>s+r.esc,0)), 'receita prevista, com a tarifa', 'p')
     + '</div>'
     + '<div class="filtros">' + campoBusca('Pasta, cliente, processo…') + selMes('fMesR', mes)
     + sel('fSit','Situação',[['','Todas'],['vencidas','Vencidas'],['aVencer','A vencer']], sit,'','onchange="setF(\'fSit\',this.value)"') + '</div>'
     + '<div class="card"><div class="tw"><table><thead><tr><th>Vencimento</th><th>Pasta / cliente</th><th>Descrição</th>'
     + '<th>Processo</th><th class="num">Valor</th><th class="num">Cliente</th><th class="num">Escritório</th><th></th></tr></thead><tbody>'
     + (L.length ? L.map(r => '<tr'+(r.venc < hj ? ' class="grifo"' : '')+'><td>'+dataBR(r.venc)+'</td>'
-      + '<td><b>'+esc(r.pasta||'—')+'</b><div class="mini">'+esc(r.cliente||'')+'</div></td>'
+      + '<td>'+pastaCliente(r.pasta, r.cliente)+'</td>'
       + '<td>'+esc(r.desc)+'</td><td class="mini">'+esc(r.proc||'—')+'</td>'
       + '<td class="num">'+nMoeda(r.valor)+'</td><td class="num">'+nMoeda(r.cli)+'</td><td class="num">'+nMoeda(r.esc)+'</td>'
       + '<td style="text-align:right;white-space:nowrap">'
@@ -1290,19 +1397,19 @@ function telaRecebidas(){
        .filter(r => !mes || mesDe(r.data) === mes)
        .sort((a,b) => String(b.data).localeCompare(String(a.data)));
 
-  return cabec('Contas recebidas', 'Créditos já conciliados, com o rateio aplicado.',
+  return cabec('Contas recebidas', 'Créditos já conciliados. A tarifa sai da parte do cliente e entra na do escritório.',
       '<button class="btn sec" onclick="exportarCSV(\'contas-recebidas\')">Exportar CSV</button>')
     + '<div class="kpis">'
     + kpi('Total recebido', moeda(L.reduce((s,r)=>s+r.valor,0)), L.length + ' recebimento(s)', 'p')
     + kpi('Repassado ao cliente', moeda(L.reduce((s,r)=>s+r.cli,0)), 'parte do cliente', 'b')
-    + kpi('Receita do escritório', moeda(L.reduce((s,r)=>s+r.esc,0)), 'base das comissões', 'd')
-    + kpi('Tarifas bancárias', moeda(L.reduce((s,r)=>s+r.tar,0)), 'deduzidas do cliente', '')
+    + kpi('Receita do escritório', moeda(L.reduce((s,r)=>s+r.esc,0)), 'inclui as tarifas', 'd')
+    + kpi('Tarifas bancárias', moeda(L.reduce((s,r)=>s+r.tar,0)), 'do cliente para o escritório', '')
     + '</div>'
     + '<div class="filtros">' + campoBusca('Pasta, cliente, processo…') + selMes('fMesX', mes) + '</div>'
     + '<div class="card"><div class="tw"><table><thead><tr><th>Crédito</th><th>Pasta / cliente</th><th>Descrição</th>'
     + '<th class="num">Valor</th><th class="num">Cliente</th><th class="num">Tarifa</th><th class="num">Escritório</th><th></th></tr></thead><tbody>'
     + (L.length ? L.map(r => '<tr><td>'+dataBR(r.data)+'</td>'
-      + '<td><b>'+esc(r.pasta||'—')+'</b><div class="mini">'+esc(r.cliente||'')+'</div></td><td>'+esc(r.desc)+'</td>'
+      + '<td>'+pastaCliente(r.pasta, r.cliente)+'</td><td>'+esc(r.desc)+'</td>'
       + '<td class="num">'+nMoeda(r.valor)+'</td><td class="num">'+nMoeda(r.cli)+'</td>'
       + '<td class="num">'+(r.tar?nMoeda(r.tar):'—')+'</td><td class="num pos">'+nMoeda(r.esc)+'</td>'
       + '<td style="text-align:right">'+(r.lanc?'<button class="btn sm sec" onclick="verParcelas(\''+r.lanc+'\')">Ver pasta</button>':'')+'</td></tr>').join('')
@@ -1383,6 +1490,7 @@ function telaComissoes(){
     const l = lancDe(p.LANC_ID);
     return {p, l, data:p.DATA_CREDITO, cliente:l.CLIENTE||'—', pasta:l.PASTA||'—', sub:l.SUBCLASSE||'—',
             caiu:n(p.VALOR_CREDITADO||p.VALOR), esc:n(p.VALOR_ESCRITORIO),
+            base:rd(n(p.VALOR_ESCRITORIO) - n(p.TARIFA)),
             itens:(DB.COMISSOES||[]).filter(c => c.PARCELA_ID === p.ID)};
   }).filter(r => !mes || mesDe(r.data) === mes)
     .filter(r => casa(r, ['cliente','pasta','sub'], t))
@@ -1393,27 +1501,29 @@ function telaComissoes(){
     porCom[c.COMISSIONADO_ID].t += n(c.VALOR);
     if (c.STATUS !== 'Paga') porCom[c.COMISSIONADO_ID].ab += n(c.VALOR); });
 
-  const cabecalho = '<tr><th>Crédito</th><th>Cliente / pasta</th><th>Subclasse</th>'
-    + '<th class="num">Caiu na conta</th><th class="num">Para o escritório</th>'
+  const cabecalho = '<tr><th>Crédito</th><th>Pasta / cliente</th><th>Subclasse</th>'
+    + '<th class="num">Caiu na conta</th><th class="num">Para o escritório</th><th class="num">Base da comissão</th>'
     + coms.map(c => '<th class="num">'+esc(c.NOME)+'</th>').join('') + '</tr>';
 
   const linhas = recs.length ? recs.map(r =>
-    '<tr><td>'+dataBR(r.data)+'</td><td><b>'+esc(r.cliente)+'</b><div class="mini">'+esc(r.pasta)+'</div></td>'
+    '<tr><td>'+dataBR(r.data)+'</td><td>'+pastaCliente(r.pasta, r.cliente)+'</td>'
     + '<td>'+esc(r.sub)+'</td><td class="num">'+nMoeda(r.caiu)+'</td><td class="num">'+nMoeda(r.esc)+'</td>'
+    + '<td class="num">'+nMoeda(r.base)+'</td>'
     + coms.map(c => { const it = r.itens.find(x => x.COMISSIONADO_ID === c.ID);
         return '<td class="num">' + (it ? nMoeda(it.VALOR) + '<div class="mini">' + nMoeda(it.PCT) + '%'
           + (it.STATUS === 'Paga' ? ' · paga' : '') + '</div>' : '<span class="mini">—</span>') + '</td>'; }).join('')
     + '</tr>').join('')
-    : '<tr><td colspan="'+(5+coms.length)+'">'+vazio('Sem comissões no período','As comissões são geradas na conciliação, conforme as regras por subclasse.')+'</td></tr>';
+    : '<tr><td colspan="'+(6+coms.length)+'">'+vazio('Sem comissões no período','As comissões são geradas na conciliação, conforme as regras por subclasse.')+'</td></tr>';
 
   const rodape = recs.length ? '<tfoot><tr><th colspan="3" style="text-align:right">Totais</th>'
     + '<th class="num">'+nMoeda(recs.reduce((s,r)=>s+r.caiu,0))+'</th>'
     + '<th class="num">'+nMoeda(recs.reduce((s,r)=>s+r.esc,0))+'</th>'
+    + '<th class="num">'+nMoeda(recs.reduce((s,r)=>s+r.base,0))+'</th>'
     + coms.map(c => '<th class="num">'+nMoeda(recs.reduce((s,r)=>s+n((r.itens.find(x=>x.COMISSIONADO_ID===c.ID)||{}).VALOR),0))+'</th>').join('')
     + '</tr></tfoot>' : '';
 
   const aPagar = todas.filter(c => c.STATUS !== 'Paga');
-  return cabec('Comissões', 'Base de cálculo: o valor que fica para o escritório. A tarifa bancária não entra na base.',
+  return cabec('Comissões', 'Base de cálculo: a parte do escritório sem a tarifa bancária.',
       '<button class="btn sec" onclick="abrirConfig(\'comissionados\')">Comissionados</button>'
     + '<button class="btn sec" onclick="abrirConfig(\'regras\')">Regras por subclasse</button>'
     + (aPagar.length ? '<button class="btn" onclick="gerarCPComissoes()">Enviar '+aPagar.length+' para contas a pagar</button>' : ''))
@@ -1449,12 +1559,12 @@ function telaPainel(){
   const noMes = d => !mes || mesDe(d) === mes;
 
   const recb = (DB.PARCELAS||[]).filter(p => p.STATUS === 'Recebida' && noMes(p.DATA_CREDITO));
-  const hon = recb.filter(p => p.TIPO !== 'Sucumbência').reduce((s,p) => s + n(p.VALOR_ESCRITORIO), 0);
+  const tarifas = recb.reduce((s,p) => s + n(p.TARIFA), 0);
+  const hon = recb.filter(p => p.TIPO !== 'Sucumbência').reduce((s,p) => s + n(p.VALOR_ESCRITORIO) - n(p.TARIFA), 0);
   const suc = recb.filter(p => p.TIPO === 'Sucumbência').reduce((s,p) => s + n(p.VALOR_ESCRITORIO), 0);
   const outras = (DB.CONTAS_RECEBER||[]).filter(c => c.STATUS === 'Recebido' && noMes(c.DATA_RECEB)).reduce((s,c) => s + n(c.VALOR), 0);
-  const tarifas = recb.reduce((s,p) => s + n(p.TARIFA), 0);
   const repasses = recb.reduce((s,p) => s + n(p.VALOR_CLIENTE), 0);
-  const bruta = hon + suc + outras;
+  const bruta = hon + suc + tarifas + outras;
 
   const desp = {};
   (DB.CONTAS_PAGAR||[]).filter(c => c.CATEGORIA !== 'Repasse a cliente' && noMes(c.VENCIMENTO))
@@ -1463,7 +1573,8 @@ function telaPainel(){
   const resultado = bruta - totDesp;
 
   const aberto = pendentesReceber();
-  const escAberto = aberto.reduce((s,p) => { const l = lancDe(p.LANC_ID); return s + rd(n(p.VALOR)*n(l.PCT_ESCRITORIO)/100); }, 0);
+  const escAberto = aberto.reduce((s,p) => { const l = lancDe(p.LANC_ID);
+    return s + rd(n(p.VALOR)*n(l.PCT_ESCRITORIO)/100 + tarifaDe(p,l)); }, 0);
   const cpAberto = (DB.CONTAS_PAGAR||[]).filter(c => c.STATUS !== 'Pago').reduce((s,c) => s + n(c.VALOR), 0);
   const pendConc = (DB.EXTRATO||[]).filter(m => m.STATUS !== 'Conciliado').length;
 
@@ -1482,13 +1593,14 @@ function telaPainel(){
     + kpi('A receber (escritório)', moeda(escAberto), aberto.length + ' parcela(s) em aberto', 'd')
     + kpi('A pagar', moeda(cpAberto), 'contas em aberto', 'b')
     + kpi('Repasses do mês', moeda(repasses), 'devidos aos clientes', '')
-    + kpi('Tarifas do mês', moeda(tarifas), 'deduzidas dos clientes', '')
+    + kpi('Tarifas do mês', moeda(tarifas), 'do cliente para o escritório', '')
     + '</div>'
     + '<div class="card"><h3>Demonstração do resultado — '+(mes ? mesBR(mes) : 'todo o período')+'</h3><div class="tw">'
     + '<table class="dre"><tbody>'
     + li('Receita bruta', bruta, 'nivel1')
     + li('Honorários contratuais (parte do escritório)', hon, 'recuo')
     + li('Honorários de sucumbência', suc, 'recuo')
+    + li('Tarifas bancárias repassadas ao escritório', tarifas, 'recuo')
     + li('Outras receitas', outras, 'recuo')
     + li('Despesas operacionais', -totDesp, 'nivel1')
     + Object.keys(desp).sort().map(k => li(k, -desp[k], 'recuo')).join('')
@@ -1497,7 +1609,7 @@ function telaPainel(){
     + '<div class="corpo" style="border-top:1px solid var(--line2)">'
     + '<h3 style="border:0;padding:0 0 8px;font-size:12px;color:var(--ink2)">Contas de terceiros (fora do resultado)</h3>'
     + '<table class="dre"><tbody>' + li('Repasses devidos aos clientes no período', repasses)
-    + li('Tarifas bancárias deduzidas dos clientes', tarifas) + '</tbody></table></div></div>'
+    + '</tbody></table></div></div>'
     + graficoMeses();
 }
 function graficoMeses(){
@@ -1522,8 +1634,9 @@ function exportarCSV(qual){
     cab = ['Vencimento','Pasta','Cliente','Processo','Descrição','Valor','Cliente R$','Escritório R$'];
     pendentesReceber().sort((a,b)=>String(a.VENCIMENTO).localeCompare(String(b.VENCIMENTO))).forEach(p => {
       const l = lancDe(p.LANC_ID);
+      const tf = tarifaDe(p, l);
       linhas.push([dataBR(p.VENCIMENTO), l.PASTA, l.CLIENTE, l.N_PROCESSO, p.TIPO+(p.NUM>0?' '+p.NUM:''),
-        nMoeda(p.VALOR), nMoeda(n(p.VALOR)*n(l.PCT_CLIENTE)/100), nMoeda(n(p.VALOR)*n(l.PCT_ESCRITORIO)/100)]);
+        nMoeda(p.VALOR), nMoeda(n(p.VALOR)*n(l.PCT_CLIENTE)/100 - tf), nMoeda(n(p.VALOR)*n(l.PCT_ESCRITORIO)/100 + tf)]);
     });
   } else if (qual === 'contas-recebidas'){
     cab = ['Crédito','Pasta','Cliente','Descrição','Valor','Cliente','Tarifa','Escritório'];
