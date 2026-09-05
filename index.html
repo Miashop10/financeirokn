@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="cache-control" content="no-cache, must-revalidate">
+<meta http-equiv="expires" content="0">
 <title>Financeiro — Escritório de Advocacia</title>
 <script>
 /* ==================================================================
@@ -163,6 +165,7 @@ td.c,th.c{text-align:center}
 .tabs button{border:0;background:transparent;padding:10px 12px;cursor:pointer;font-size:13.3px;color:var(--text-2);border-bottom:2px solid transparent;margin-bottom:-1px}
 .tabs button.on{color:var(--text);border-bottom-color:var(--brass);font-weight:600}
 .parc-line{display:grid;grid-template-columns:44px 1fr 1fr 1fr auto;gap:8px;align-items:end;margin-bottom:8px}
+.ni-grid{display:grid;grid-template-columns:minmax(240px,1fr) minmax(280px,1.4fr);gap:16px;padding:14px 16px}
 .dz{border:1.5px dashed var(--line);border-radius:var(--r);padding:22px;text-align:center;color:var(--text-2);background:#FBFCFD;cursor:pointer}
 .dz.hot{border-color:var(--brass);background:var(--brass-soft)}
 .bar{height:8px;border-radius:8px;background:var(--line-2);overflow:hidden}
@@ -190,7 +193,14 @@ td.c,th.c{text-align:center}
 .ax .nm{padding:6px 8px;font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ax .ac{display:flex;gap:4px;padding:0 6px 6px}
 .ax .ac a,.ax .ac button{font-size:11px;padding:2px 6px}
-@media(max-width:1080px){.rec-main{grid-template-columns:88px 1fr 110px;grid-row-gap:6px}.rec-main .rc-hide{display:none}}
+@media(max-width:1080px){
+  .rec-main{display:flex;flex-wrap:wrap;gap:8px 12px}
+  .rec-main>*:nth-child(1){order:1}
+  .rec-main>*:nth-child(3){order:2;margin-left:auto}
+  .rec-desc{order:3;flex:1 1 100%}
+  .rec-main>*:nth-child(4){order:4}
+  .rec-main>*:nth-child(5){order:5;margin-left:auto}
+}
 @media(max-width:900px){
   .app{flex-direction:column}
   .side{width:100%;flex:none;height:auto;position:static;flex-direction:column}
@@ -200,6 +210,12 @@ td.c,th.c{text-align:center}
   .content{padding:14px}.g2,.g3,.g4,.g6{grid-template-columns:1fr}
   .sug-item{grid-template-columns:1fr}
   .parc-line{grid-template-columns:1fr 1fr}
+  .ni-grid{grid-template-columns:1fr}
+}
+@media print{
+  .side,.topbar,.btn,#toast{display:none!important}
+  .content{padding:0;max-width:none}.card{box-shadow:none;border-color:#ccc;break-inside:avoid}
+  body{background:#fff}
 }
 @media(prefers-reduced-motion:no-preference){.toast{animation:up .18s ease-out}@keyframes up{from{transform:translateY(8px);opacity:0}}}
 </style>
@@ -209,7 +225,7 @@ td.c,th.c{text-align:center}
   <aside class="side">
     <div class="brand">
       <div class="mark" id="brandName">Financeiro</div>
-      <div class="sub">Gestão financeira do escritório</div>
+      <div class="sub">Gestão financeira do escritório · v5</div>
     </div>
     <nav class="nav" id="nav">
       <div class="nav-group">Operação</div>
@@ -245,11 +261,10 @@ td.c,th.c{text-align:center}
 </div>
 <div class="login" id="login" style="display:none">
   <div class="box">
-    <h2>Financeiro do escritório</h2>
+    <h2>Financeiro do escritório <span class="tag t-brass" style="vertical-align:middle;font-size:11px">v5</span></h2>
     <div class="sb" id="lgSub">Os dados ficam no Google Sheets da sua conta e são compartilhados por toda a equipe.</div>
     <div class="f" id="lgUrlBox"><label class="f">Endereço do sistema (URL /exec do Apps Script)</label><input class="inp" id="lgUrl" placeholder="https://script.google.com/macros/s/.../exec"></div>
-    <div class="f" id="lgMailBox"><label class="f">E-mail</label><input class="inp" id="lgMail" autocomplete="username" value=""></div>
-    <div class="f" id="lgSenhaBox"><label class="f">Senha</label><input class="inp" type="password" id="lgSenha" autocomplete="current-password"></div>
+    <div id="lgCreds"></div>
     <button class="btn primary" style="width:100%;justify-content:center;margin-top:18px" id="lgBtn">Entrar</button>
     <div class="small" id="lgMsg" style="margin-top:12px;min-height:18px"></div>
     <div class="tiny" id="lgVer" style="margin-top:14px"></div>
@@ -1260,7 +1275,7 @@ function viewNaoIdent(){
     <div class="card-b flush">
     ${lista.length?lista.map(m=>{
       const sug=pastasMesmoValor(m).slice(0,6);
-      return `<div class="rec-row"><div style="display:grid;grid-template-columns:minmax(240px,1fr) minmax(280px,1.4fr);gap:16px;padding:14px 16px" class="ni-grid">
+      return `<div class="rec-row"><div class="ni-grid">
         <div>
           <div class="row" style="gap:8px"><span class="small num mut">${dBR(m.data)}</span><span class="money strong pos">${moneyR(m.valor)}</span></div>
           <div style="margin-top:4px">${esc(m.descricao)}</div>
@@ -1840,17 +1855,18 @@ function mostrarLogin(msg){
   el('lgUrl').value=API_URL||'';
   el('lgVer').textContent='Entrada direta: '+(DIRETO?'ligada':'desligada')+' · endereço no código: '+(URL_FIXA?'sim':'não');
   if(DIRETO){
-    el('lgMailBox').style.display='none';
-    el('lgSenhaBox').style.display='none';
+    el('lgCreds').innerHTML='';
     el('lgUrlBox').style.display='';
     el('lgBtn').textContent='Conectar';
     el('lgSub').textContent='Cole o endereço do sistema uma única vez. Depois disso este computador entra sozinho, sem pedir mais nada.';
   } else {
+    el('lgCreds').innerHTML=`<div class="f"><label class="f">E-mail</label><input class="inp" id="lgMail" autocomplete="username" value="${esc((USUARIO&&USUARIO.email)||'')}"></div>
+      <div class="f"><label class="f">Senha</label><input class="inp" type="password" id="lgSenha" autocomplete="current-password"></div>`;
+    ['lgMail','lgSenha'].forEach(id=>{ const c=el(id); if(c) c.addEventListener('keydown',e=>{ if(e.key==='Enter') entrar(); }); });
     if(URL_FIXA) el('lgUrlBox').style.display='none';
-    el('lgMail').value=(USUARIO&&USUARIO.email)||'';
   }
   if(msg) el('lgMsg').innerHTML='<span class="tag t-red">'+esc(msg)+'</span>';
-  setTimeout(()=>{ const c=el(DIRETO?'lgUrl':(URL_FIXA?(el('lgMail').value?'lgSenha':'lgMail'):'lgUrl')); if(c&&c.focus) c.focus(); },80);
+  setTimeout(()=>{ const c=el(DIRETO?'lgUrl':(URL_FIXA?(val('lgMail')?'lgSenha':'lgMail'):'lgUrl')); if(c&&c.focus) c.focus(); },80);
 }
 async function entrar(){
   const url=(URL_FIXA?URL_SISTEMA:val('lgUrl')).replace(/\s/g,''), mail=val('lgMail'), senha=val('lgSenha');
@@ -1886,7 +1902,7 @@ async function autoEntrar(){
   }catch(e){ return false; }
 }
 el('lgBtn').onclick=entrar;
-['lgSenha','lgMail','lgUrl'].forEach(id=>el(id).addEventListener('keydown',e=>{ if(e.key==='Enter') entrar(); }));
+el('lgUrl').addEventListener('keydown',e=>{ if(e.key==='Enter') entrar(); });
 
 async function iniciar(){
   DB=dbVazio();
