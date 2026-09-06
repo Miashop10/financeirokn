@@ -273,7 +273,7 @@ table.dre tr.recuo td:first-child{padding-left:26px;color:var(--ink2)}
    CONFIGURAÇÃO — cole aqui a URL /exec do seu Apps Script
    ══════════════════════════════════════════════════════════ */
 const API_URL = 'https://script.google.com/macros/s/AKfycbzNNoolgJTQ5fKDmQ9ieSdWoLQrdKpRZB_GrxGHqtFjAFagZYoZ5a7_cCzfuDnvk05h/exec';
-const VERSAO_APP = 'v2.5';
+const VERSAO_APP = 'v2.6';
 
 /* ── ESTADO ── */
 let DB = {}, USER = null, ABA = 'conciliacao', SUB = '', FILTROS = {};
@@ -2190,6 +2190,135 @@ async function confirmarImport(){
     toast(lote.length + ' movimentos importados. Confira as sugestões.','ok');
   }catch(e){ toast(e.message,'erro'); } finally{ carregandoOff(); }
 }
+
+/* ══════════════════ IMPORTAÇÃO DE CONTAS A PAGAR ══════════════════ */
+let IMPCP = [], IMPCP_NOVAS = {cats:[], favs:[]}, IMPCP_REPETIDAS = 0;
+const semAcento = s => String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+
+function formImportarCP(){
+  IMPCP = []; IMPCP_NOVAS = {cats:[], favs:[]}; IMPCP_REPETIDAS = 0;
+  modal('Importar contas a pagar',
+    '<div class="campo"><label for="icpArq">Planilha (Excel ou CSV)</label>'
+    + '<input type="file" id="icpArq" accept=".xlsx,.xls,.csv,.txt" onchange="lerArquivoCP(this)"></div>'
+    + '<p class="mini">Colunas reconhecidas, em qualquer ordem: <b>vencimento</b>, <b>favorecido</b>, '
+    + '<b>categoria</b>, <b>valor</b> e <b>observações</b>. Uma coluna de descrição, se existir, também é lida. '
+    + 'A primeira linha deve ser o cabeçalho.</p>'
+    + '<div id="icpPrevia"></div>',
+    '<button class="btn sec" onclick="fecharModal()">Cancelar</button>'
+    + '<button class="btn" id="btnImpCP" disabled onclick="confirmarImportCP()">Importar contas</button>', 'larga');
+}
+async function lerArquivoCP(inp){
+  const f = inp.files[0]; if (!f) return;
+  $('#icpPrevia').innerHTML = '<p class="mini">Lendo planilha…</p>';
+  try{
+    const nome = f.name.toLowerCase();
+    const rows = /\.(csv|txt)$/.test(nome) ? await tabelaDeCSV(await f.text()) : await tabelaDeExcel(f);
+    previaImportCP(parseTabelaCP(rows));
+  }catch(e){
+    $('#icpPrevia').innerHTML = '<div class="erro">Não foi possível ler a planilha: '+esc(e.message)+'</div>';
+  }
+}
+/* acha as colunas pelo cabeçalho, em qualquer ordem */
+function mapaColunasCP(rows){
+  const alvos = [
+    ['venc',  ['vencimento','vence','data de venc','data']],
+    ['valor', ['valor','montante','r$','total']],
+    ['fav',   ['favorecido','fornecedor','beneficiario','credor','pagar a','nome']],
+    ['cat',   ['categoria','classificacao','classe','tipo','conta']],
+    ['desc',  ['descricao','historico','discriminacao']],
+    ['obs',   ['observacao','observacoes','obs']]
+  ];
+  for (let r = 0; r < Math.min(12, rows.length); r++){
+    const cab = (rows[r]||[]).map(semAcento);
+    const mapa = {}, usadas = new Set();
+    alvos.forEach(([chave, termos]) => {
+      for (const termo of termos){
+        const i = cab.findIndex((c, idx) => !usadas.has(idx) && c && c.includes(termo));
+        if (i >= 0){ mapa[chave] = i; usadas.add(i); return; }
+      }
+    });
+    if (mapa.valor !== undefined && (mapa.venc !== undefined || mapa.fav !== undefined))
+      return {mapa, inicio: r + 1};
+  }
+  return null;
+}
+function parseTabelaCP(rows){
+  const m = mapaColunasCP(rows);
+  if (!m) throw new Error('cabeçalho não reconhecido. Confira se há colunas de vencimento, favorecido, categoria, valor e observações.');
+  const pega = (linha, chave) => m.mapa[chave] === undefined ? '' : String(linha[m.mapa[chave]] || '').trim();
+  const out = [];
+  for (let r = m.inicio; r < rows.length; r++){
+    const linha = rows[r] || [];
+    const valor = n(pega(linha, 'valor'));
+    const venc = isoDe(pega(linha, 'venc'));
+    const fav = tit(pega(linha, 'fav'));
+    if (!valor && !fav) continue;
+    const cat = tit(pega(linha, 'cat'));
+    const desc = tit(pega(linha, 'desc'));
+    out.push({ VENCIMENTO: venc, FAVORECIDO: fav, CATEGORIA: cat, VALOR: rd(valor),
+               DESCRICAO: desc || cat || 'Conta a pagar', OBS: pega(linha, 'obs') });
+  }
+  return out;
+}
+function previaImportCP(linhas){
+  IMPCP = []; IMPCP_REPETIDAS = 0;
+  const catsDeb = new Set(categorias('D').map(semAcento));
+  const favs = new Set((DB.FAVORECIDOS||[]).map(f => semAcento(f.NOME)));
+  const novasCats = new Set(), novosFavs = new Set();
+  const existentes = new Set((DB.CONTAS_PAGAR||[]).map(c =>
+    (c.VENCIMENTO||'') + '|' + semAcento(c.FAVORECIDO) + '|' + rd(c.VALOR)));
+
+  linhas.forEach(l => {
+    const chave = l.VENCIMENTO + '|' + semAcento(l.FAVORECIDO) + '|' + rd(l.VALOR);
+    if (existentes.has(chave)){ IMPCP_REPETIDAS++; return; }
+    existentes.add(chave);
+    if (l.CATEGORIA && !catsDeb.has(semAcento(l.CATEGORIA))) novasCats.add(l.CATEGORIA);
+    if (l.FAVORECIDO && !favs.has(semAcento(l.FAVORECIDO))) novosFavs.add(l.FAVORECIDO);
+    IMPCP.push(l);
+  });
+  IMPCP_NOVAS = {cats:[...novasCats], favs:[...novosFavs]};
+
+  const semVenc = IMPCP.filter(l => !l.VENCIMENTO).length;
+  const total = IMPCP.reduce((s,l) => s + n(l.VALOR), 0);
+  $('#icpPrevia').innerHTML =
+    '<div class="kpis" style="margin:14px 0 10px">'
+    + '<div class="kpi d"><div class="rot">Contas novas</div><div class="val">'+IMPCP.length+'</div></div>'
+    + '<div class="kpi b"><div class="rot">Já cadastradas (ignoradas)</div><div class="val">'+IMPCP_REPETIDAS+'</div></div>'
+    + '<div class="kpi p"><div class="rot">Soma</div><div class="val" style="font-size:17px">'+moeda(total)+'</div></div></div>'
+    + (IMPCP_NOVAS.cats.length || IMPCP_NOVAS.favs.length
+        ? '<p class="mini">Serão criados junto: '
+          + (IMPCP_NOVAS.cats.length ? '<b>'+IMPCP_NOVAS.cats.length+'</b> categoria(s) de débito ('+esc(IMPCP_NOVAS.cats.join(', '))+')' : '')
+          + (IMPCP_NOVAS.cats.length && IMPCP_NOVAS.favs.length ? ' e ' : '')
+          + (IMPCP_NOVAS.favs.length ? '<b>'+IMPCP_NOVAS.favs.length+'</b> favorecido(s)' : '') + '.</p>'
+        : '')
+    + (semVenc ? '<div class="erro">'+semVenc+' linha(s) sem vencimento reconhecido. Elas entram com a data de hoje — confira o formato da coluna (dd/mm/aaaa).</div>' : '')
+    + '<div class="tw" style="max-height:280px;overflow:auto"><table class="densa"><thead><tr><th>Vencimento</th>'
+    + '<th>Descrição</th><th>Favorecido</th><th>Categoria</th><th class="num">Valor</th><th>Observações</th></tr></thead><tbody>'
+    + IMPCP.slice(0,150).map(l => '<tr><td>'+(l.VENCIMENTO ? dataBR(l.VENCIMENTO) : '<span class="tag t-pend">sem data</span>')+'</td>'
+      + '<td>'+esc(l.DESCRICAO)+'</td><td>'+esc(l.FAVORECIDO||'—')+'</td><td>'+esc(l.CATEGORIA||'—')+'</td>'
+      + '<td class="num">'+nMoeda(l.VALOR)+'</td><td class="mini">'+esc(l.OBS||'')+'</td></tr>').join('')
+    + '</tbody></table></div>' + (IMPCP.length > 150 ? '<p class="mini">Mostrando as 150 primeiras linhas.</p>' : '');
+  $('#btnImpCP').disabled = IMPCP.length === 0;
+}
+async function confirmarImportCP(){
+  if (!IMPCP.length) return;
+  carregandoOn('Importando '+IMPCP.length+' contas…');
+  try{
+    const lote = [];
+    IMPCP_NOVAS.cats.forEach(nome => lote.push({aba:'SUBCLASSES', registro:{ID:uid('sc'), NOME:nome, TIPO:'Débito', RATEIO:''}}));
+    IMPCP_NOVAS.favs.forEach(nome => lote.push({aba:'FAVORECIDOS', registro:{ID:uid('fv'), NOME:nome, DOC:'', CATEGORIA:'', ATIVO:'SIM'}}));
+    IMPCP.forEach(l => lote.push({aba:'CONTAS_PAGAR', registro:{
+      ID:uid('cp'), DESCRICAO:l.DESCRICAO, FAVORECIDO:l.FAVORECIDO, CATEGORIA:l.CATEGORIA,
+      VENCIMENTO:l.VENCIMENTO || hoje(), VALOR:l.VALOR, STATUS:'Em aberto', DATA_PGTO:'',
+      ORIGEM:'Importada de planilha', PARCELA_ID:'', ANEXO_URL:'', OBS:l.OBS }}));
+    for (let i=0;i<lote.length;i+=300){
+      carregandoOn('Importando… ' + Math.min(i+300, lote.length) + ' de ' + lote.length);
+      await salvarLote(lote.slice(i, i+300));
+    }
+    fecharModal(); ABA = 'pagar'; render();
+    toast(IMPCP.length + ' conta(s) importada(s).','ok');
+  }catch(e){ toast(e.message,'erro'); } finally{ carregandoOff(); }
+}
 /* ══════════════════ CONTAS A RECEBER ══════════════════ */
 /* ══════════════════════════════════════════════════════════
    Exclusão com retorno à conciliação.
@@ -2671,6 +2800,7 @@ function telaPagar(){
 
   return cabec('Contas a pagar', 'Apenas contas em aberto. ✕ = a parcela do cliente ainda não caiu; ✓ = já recebemos e o repasse pode ser pago. Ao conciliar o débito, a conta vai para Contas pagas.',
       '<button class="btn" onclick="formCP()">Lançar nova conta</button>'
+    + '<button class="btn sec" onclick="formImportarCP()">Importar planilha</button>'
     + '<button class="btn sec" onclick="exportarCSV(\'contas-a-pagar\')">Exportar CSV</button>')
     + '<div class="kpis">'
     + kpi('Em aberto', moeda(abertas.reduce((s,c)=>s+n(c.VALOR),0)), abertas.length + ' conta(s)', 'b')
