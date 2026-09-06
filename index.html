@@ -101,6 +101,10 @@ th{text-align:left;font-weight:600;font-size:11px;letter-spacing:.04em;color:var
 td{padding:8px 10px;border-bottom:1px solid var(--line2);vertical-align:top}
 tbody tr:hover{background:var(--surface2)}
 tr.grifo{background:var(--brass-l)}
+.barraSel{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--brand-l);border:1px solid var(--brand);
+  border-radius:var(--r);padding:9px 14px;margin-bottom:14px;font-size:13px;color:var(--brand-d)}
+tr.sel{background:var(--brand-l)}
+tr.sel:hover{background:var(--brand-l)}
 .pill{display:inline-flex;align-items:center;gap:7px;background:var(--surface2);border:1px solid var(--line);border-radius:20px;padding:4px 6px 4px 12px;font-size:12.5px}
 .pill.off{opacity:.55}
 .pill button{background:none;border:0;color:var(--ink3);width:22px;height:22px;border-radius:50%;font-size:12px;line-height:1}
@@ -1327,6 +1331,7 @@ function telaConciliacao(){
   const topo = cabec('Conciliação bancária',
       'Recebimentos e pagamentos só se efetivam aqui. Nada é baixado manualmente.',
       '<button class="btn" onclick="formImportar()">Importar extrato</button>'
+    + '<button class="btn sec" onclick="historicoImportacoes()">Histórico de importações</button>'
     + '<button class="btn sec" onclick="abrirConfig(\'contas\')">Contas bancárias</button>')
     + ((DB.CONTAS_BANCO||[]).length
         ? '<div class="filtros">' + sel('fConta','Conta bancária', opcoesContas(true), conta, '', 'onchange="setF(\'fConta\',this.value)"')
@@ -1774,9 +1779,71 @@ async function gravarNovoNaConciliacao(movId){
     await conciliar(movId, id);
   }catch(e){}
 }
+/* ── Histórico de importações ── */
+/* movimentos antigos não têm lote: são agrupados pela data e conta da importação */
+const chaveLote = m => m.LOTE || ('antigo|' + (m.IMPORTADO_EM||'') + '|' + (m.BANCO||''));
+function lotesImportados(){
+  const mapa = {};
+  (DB.EXTRATO||[]).forEach(m => {
+    const k = chaveLote(m);
+    const g = mapa[k] || (mapa[k] = { chave:k, arquivo:m.ARQUIVO || '', banco:m.BANCO || '',
+      quando:m.IMPORTADO_EM || '', movs:[] });
+    g.movs.push(m);
+    if (m.ARQUIVO && !g.arquivo) g.arquivo = m.ARQUIVO;
+  });
+  return Object.values(mapa).map(g => {
+    g.total = g.movs.reduce((s,m) => s + n(m.VALOR), 0);
+    g.conciliados = g.movs.filter(m => m.STATUS === 'Conciliado').length;
+    g.pendentes = g.movs.filter(m => m.STATUS === 'Pendente').length;
+    g.naoId = g.movs.filter(m => m.STATUS === 'Nao identificado').length;
+    const datas = g.movs.map(m => m.DATA).filter(Boolean).sort();
+    g.de = datas[0] || ''; g.ate = datas[datas.length-1] || '';
+    return g;
+  }).sort((a,b) => String(b.quando).localeCompare(String(a.quando)));
+}
+function historicoImportacoes(){
+  const L = lotesImportados();
+  const corpo = L.length
+    ? '<div class="tw"><table class="densa"><thead><tr><th>Importado em</th><th>Arquivo</th><th>Conta</th>'
+      + '<th>Período</th><th class="num">Movs.</th><th class="num">Soma</th><th>Situação</th><th></th></tr></thead><tbody>'
+      + L.map(g => '<tr><td>'+esc(g.quando ? dataBR(g.quando) + (g.quando.length > 10 ? ' ' + g.quando.slice(11) : '') : '—')+'</td>'
+        + '<td><b>'+esc(g.arquivo || 'Importação anterior')+'</b></td>'
+        + '<td>'+esc(g.banco || '—')+'</td>'
+        + '<td class="mini">'+dataBR(g.de)+' a '+dataBR(g.ate)+'</td>'
+        + '<td class="num">'+g.movs.length+'</td>'
+        + '<td class="num">'+nMoeda(g.total)+'</td>'
+        + '<td>'+(g.conciliados ? '<span class="tag t-ok">'+g.conciliados+' conciliados</span> ' : '')
+              + (g.pendentes ? '<span class="tag t-pend">'+g.pendentes+' pendentes</span> ' : '')
+              + (g.naoId ? '<span class="tag t-ni">'+g.naoId+' não identificados</span>' : '')+'</td>'
+        + '<td style="text-align:right"><button class="btn sm per" onclick="excluirImportacao(\''+esc(g.chave).replace(/'/g,"\\'")+'\')">Excluir</button></td></tr>').join('')
+      + '</tbody></table></div>'
+      + '<p class="mini" style="margin-top:10px">Excluir uma importação apaga os movimentos dela. '
+      + 'Movimentos já conciliados travam a exclusão — desfaça a conciliação antes.</p>'
+    : vazio('Nenhuma importação','Os extratos importados aparecem aqui, com a opção de excluir cada arquivo.');
+  modal('Histórico de importações', corpo, '<button class="btn sec" onclick="fecharModal()">Fechar</button>', 'larga');
+}
+async function excluirImportacao(chave){
+  const g = lotesImportados().find(x => x.chave === chave);
+  if (!g) return toast('Importação não encontrada.','erro');
+  if (g.conciliados)
+    return toast('Esta importação tem '+g.conciliados+' movimento(s) já conciliado(s). Desfaça a conciliação deles antes de excluir.','erro');
+  if (!confirm('Excluir a importação de "'+(g.arquivo || 'arquivo anterior')+'" e seus '+g.movs.length+' movimento(s)?')) return;
+  carregandoOn('Excluindo importação…');
+  try{
+    const ids = g.movs.map(m => m.ID);
+    for (let i=0;i<ids.length;i+=200){
+      await api({action:'excluirLote', lote: ids.slice(i,i+200).map(id => ({aba:'EXTRATO', id}))});
+    }
+    const set = new Set(ids);
+    DB.EXTRATO = (DB.EXTRATO||[]).filter(m => !set.has(m.ID));
+    render(); historicoImportacoes();
+    toast(ids.length + ' movimento(s) excluído(s).','ok');
+  }catch(e){ toast(e.message,'erro'); } finally{ carregandoOff(); }
+}
+
 const hashMov = (d,v,desc) => String(d)+'|'+rd(v)+'|'+String(desc||'').replace(/\s+/g,' ').trim().toUpperCase().slice(0,60);
 /* ══════════════════ IMPORTAÇÃO DE EXTRATO ══════════════════ */
-let IMP = [], IMP_BRUTO = [];
+let IMP = [], IMP_BRUTO = [], IMP_NOME = '';
 function formImportar(){
   if (!(DB.CONTAS_BANCO||[]).length){
     modal('Importar extrato bancário',
@@ -1796,7 +1863,7 @@ function formImportar(){
     + '<div id="impPrevia"><p class="mini">O sistema lê data, identificação e valor. Movimentos já importados são ignorados automaticamente.</p></div>',
     '<button class="btn sec" onclick="fecharModal()">Cancelar</button><button class="btn" id="btnImp" disabled onclick="confirmarImport()">Importar movimentos</button>',
     'larga');
-  IMP = []; IMP_BRUTO = [];
+  IMP = []; IMP_BRUTO = []; IMP_NOME = '';
 }
 async function lerArquivo(inp){
   const f = inp.files[0]; if (!f) return;
@@ -1809,7 +1876,7 @@ async function lerArquivo(inp){
     else if (/\.(csv|txt)$/.test(nome)) linhas = parseTabela(await tabelaDeCSV(await f.text()));
     else linhas = parseTabela(await tabelaDeExcel(f));
     if (!linhas.length){ $('#impPrevia').innerHTML = '<div class="erro">Nenhum movimento reconhecido. Confira se o arquivo traz data, identificação e valor.</div>'; return; }
-    IMP_BRUTO = linhas; previaImport();
+    IMP_BRUTO = linhas; IMP_NOME = f.name; previaImport();
   }catch(e){
     $('#impPrevia').innerHTML = '<div class="erro">Não foi possível ler o arquivo: '+esc(e.message)+'</div>';
   }
@@ -1900,7 +1967,7 @@ function lerColado(){
       $('#impPrevia').innerHTML = '<div class="erro">Nenhum movimento reconhecido. Cada linha precisa de uma data e um valor — por exemplo: 03/09/2026 TED RECEBIDA 1.000,00</div>';
       $('#btnImp').disabled = true; return;
     }
-    IMP_BRUTO = linhas; previaImport();
+    IMP_BRUTO = linhas; IMP_NOME = 'Texto colado'; previaImport();
   }catch(e){ $('#impPrevia').innerHTML = '<div class="erro">'+esc(e.message)+'</div>'; }
 }
 function parseColado(txt){
@@ -1954,10 +2021,12 @@ async function confirmarImport(){
   if (!banco) return toast('Escolha a conta bancária deste extrato.','erro');
   carregandoOn('Importando '+IMP.length+' movimentos…');
   try{
+    const loteId = uid('lt');
+    const quando = new Date().toISOString().slice(0,16).replace('T',' ');
     const lote = IMP.map(m => ({aba:'EXTRATO', registro:{
       ID:uid('m'), DATA:m.DATA, IDENTIFICACAO:m.IDENTIFICACAO, VALOR:m.VALOR,
       TIPO: n(m.VALOR) < 0 ? 'D' : 'C', STATUS:'Pendente', PARCELA_ID:'', HASH:m.HASH,
-      BANCO:banco, IMPORTADO_EM:hoje(), OBS:'' }}));
+      BANCO:banco, IMPORTADO_EM:quando, OBS:'', LOTE:loteId, ARQUIVO:IMP_NOME || 'Arquivo' }}));
     for (let i=0;i<lote.length;i+=300){
       carregandoOn('Importando… ' + Math.min(i+300, lote.length) + ' de ' + lote.length);
       await salvarLote(lote.slice(i, i+300));
@@ -1967,6 +2036,58 @@ async function confirmarImport(){
   }catch(e){ toast(e.message,'erro'); } finally{ carregandoOff(); }
 }
 /* ══════════════════ CONTAS A RECEBER ══════════════════ */
+/* seleção múltipla em contas a receber */
+let SELR = new Set(), SELR_VISIVEIS = [];
+function marcarReceber(id, marcado){
+  if (marcado) SELR.add(id); else SELR.delete(id);
+  render();
+}
+function selecionarTodosReceber(marcado){
+  SELR = marcado ? new Set(SELR_VISIVEIS) : new Set();
+  render();
+}
+/* exclui parcelas e recebimentos avulsos, junto com o repasse que cada um gerou */
+async function excluirReceber(ids){
+  const apagar = [], travados = [];
+  ids.forEach(id => {
+    const p = parcDe(id);
+    if (p){
+      if (p.STATUS === 'Recebida'){ travados.push('parcela já conciliada'); return; }
+      const cp = (DB.CONTAS_PAGAR||[]).find(c => c.ID === p.CP_ID
+        || (c.PARCELA_ID === p.ID && c.CATEGORIA === 'Repasse a cliente'));
+      if (cp && cp.STATUS === 'Pago'){ travados.push('repasse já pago'); return; }
+      apagar.push({aba:'PARCELAS', id:p.ID});
+      if (cp) apagar.push({aba:'CONTAS_PAGAR', id:cp.ID});
+      return;
+    }
+    const cr = (DB.CONTAS_RECEBER||[]).find(c => c.ID === id);
+    if (cr){
+      if (cr.STATUS === 'Recebido'){ travados.push('recebimento já conciliado'); return; }
+      const cp = (DB.CONTAS_PAGAR||[]).find(c => c.ID === cr.CP_ID);
+      if (cp && cp.STATUS === 'Pago'){ travados.push('repasse já pago'); return; }
+      apagar.push({aba:'CONTAS_RECEBER', id:cr.ID});
+      if (cp) apagar.push({aba:'CONTAS_PAGAR', id:cp.ID});
+    }
+  });
+  if (!apagar.length)
+    return toast(travados.length ? 'Nada excluído: ' + travados[0] + '. Desfaça a conciliação antes.' : 'Nada a excluir.','erro');
+
+  const qtdReg = apagar.filter(a => a.aba !== 'CONTAS_PAGAR').length;
+  const qtdRep = apagar.length - qtdReg;
+  if (!confirm('Excluir ' + qtdReg + ' lançamento(s)'
+      + (qtdRep ? ' e ' + qtdRep + ' repasse(s) ao cliente gerado(s) por eles' : '') + '?')) return;
+
+  carregandoOn('Excluindo…');
+  try{
+    await api({action:'excluirLote', lote:apagar});
+    apagar.forEach(a => { DB[a.aba] = (DB[a.aba]||[]).filter(x => x.ID !== a.id); });
+    SELR = new Set();
+    render();
+    toast(qtdReg + ' lançamento(s) excluído(s).' + (travados.length ? ' ' + travados.length + ' não pôde(ram) ser excluído(s).' : ''), 'ok');
+  }catch(e){ toast(e.message,'erro'); } finally{ carregandoOff(); }
+}
+function excluirSelecionadosReceber(){ excluirReceber([...SELR]); }
+
 /* tarifa aplicável a uma parcela (sai do cliente e vai para o escritório) */
 function tarifaDe(p, l){
   if (p.TIPO === 'Sucumbência') return 0;
@@ -1997,6 +2118,11 @@ function telaReceber(){
   const total = L.reduce((s,r) => s + r.valor, 0);
   const vencidas = L.filter(r => r.venc < hj);
 
+  SELR_VISIVEIS = L.map(r => r.id);
+  SELR = new Set([...SELR].filter(id => SELR_VISIVEIS.includes(id)));   // some o que saiu do filtro
+  const todosMarcados = L.length > 0 && SELR.size === L.length;
+  const selecionados = L.filter(r => SELR.has(r.id));
+
   return cabec('Contas a receber', 'Parcelas em aberto. A baixa só acontece ao conciliar o crédito no extrato bancário.',
       '<button class="btn sec" onclick="formCR()">Nova conta a receber</button>'
     + '<button class="btn sec" onclick="exportarCSV(\'contas-a-receber\')">Exportar CSV</button>')
@@ -2008,18 +2134,31 @@ function telaReceber(){
     + '</div>'
     + '<div class="filtros">' + campoBusca('Pasta, cliente, processo…') + selMes('fMesR', mes)
     + sel('fSit','Situação',[['','Todas'],['vencidas','Vencidas'],['aVencer','A vencer']], sit,'','onchange="setF(\'fSit\',this.value)"') + '</div>'
-    + '<div class="card"><div class="tw"><table><thead><tr><th>Vencimento</th><th>Pasta / cliente</th><th>Descrição</th>'
+    + (selecionados.length
+        ? '<div class="barraSel"><b>'+selecionados.length+'</b> selecionado(s) · '
+          + moeda(selecionados.reduce((s,r) => s + r.valor, 0))
+          + '<span style="flex:1"></span>'
+          + '<button class="btn sm sec" onclick="SELR=new Set();render()">Limpar seleção</button> '
+          + '<button class="btn sm per" onclick="excluirSelecionadosReceber()">Excluir selecionados</button></div>'
+        : '')
+    + '<div class="card"><div class="tw"><table><thead><tr>'
+    + '<th style="width:34px"><input type="checkbox" title="Selecionar todos" '+(todosMarcados?'checked':'')
+      + ' style="width:16px;height:16px;accent-color:var(--brand)" onchange="selecionarTodosReceber(this.checked)"></th>'
+    + '<th>Vencimento</th><th>Pasta / cliente</th><th>Descrição</th>'
     + '<th>Processo</th><th class="num">Valor</th><th class="num">Cliente</th><th class="num">Escritório</th><th></th></tr></thead><tbody>'
-    + (L.length ? L.map(r => '<tr'+(r.venc < hj ? ' class="grifo"' : '')+'><td>'+dataBR(r.venc)+'</td>'
+    + (L.length ? L.map(r => '<tr'+(SELR.has(r.id) ? ' class="sel"' : r.venc < hj ? ' class="grifo"' : '')+'>'
+      + '<td><input type="checkbox" '+(SELR.has(r.id)?'checked':'')
+        + ' style="width:16px;height:16px;accent-color:var(--brand)" onchange="marcarReceber(\''+r.id+'\',this.checked)"></td>'
+      + '<td>'+dataBR(r.venc)+'</td>'
       + '<td>'+pastaCliente(r.pasta, r.cliente)+'</td>'
       + '<td>'+esc(r.desc)+'</td><td class="mini">'+esc(r.proc||'—')+'</td>'
       + '<td class="num">'+nMoeda(r.valor)+'</td><td class="num">'+nMoeda(r.cli)+'</td><td class="num">'+nMoeda(r.esc)+'</td>'
       + '<td style="text-align:right;white-space:nowrap">'
-      + (r.tipo === 'parcela' ? '<button class="btn sm sec" onclick="formLanc(\''+r.lanc+'\')">Abrir</button>'
-                              : '<button class="btn sm sec" onclick="formCR(\''+r.id+'\')">Editar</button> '
-                              + '<button class="btn sm per" onclick="apagarSimples(\'CONTAS_RECEBER\',\''+r.id+'\')">Excluir</button>')
+      + (r.tipo === 'parcela' ? '<button class="btn sm sec" onclick="formLanc(\''+r.lanc+'\')">Abrir</button> '
+                              : '<button class="btn sm sec" onclick="formCR(\''+r.id+'\')">Editar</button> ')
+      + '<button class="btn sm per" onclick="excluirReceber([\''+r.id+'\'])">Excluir</button>'
       + '</td></tr>').join('')
-      : '<tr><td colspan="8">'+vazio('Nada a receber','Cadastre um lançamento para gerar parcelas.')+'</td></tr>')
+      : '<tr><td colspan="9">'+vazio('Nada a receber','Cadastre um lançamento para gerar parcelas.')+'</td></tr>')
     + '</tbody></table></div></div>';
 }
 function formCR(id){
