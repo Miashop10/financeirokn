@@ -280,6 +280,12 @@ function n(v){
   return isNaN(x) ? 0 : x;
 }
 const rd = v => Math.round(n(v)*100)/100;
+/* percentual de uma parte sobre um total, para exibição */
+function pctSobre(parte, total){
+  if (!n(total)) return '—';
+  const x = rd(n(parte) / n(total) * 100);
+  return (x % 1 === 0 ? String(x) : nMoeda(x)) + '%';
+}
 function moeda(v){
   const x = rd(v);
   return (x<0?'-':'') + 'R$ ' + Math.abs(x).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -1771,8 +1777,9 @@ function sincronizaRateio(origem){
   else eEsc.value = nMoeda(rd(total - n(eCli.value)));
   const cli = rd(n(eCli.value)), esc = rd(n(eEsc.value));
   const aviso = document.getElementById('avisoRateio');
-  if (aviso) aviso.innerHTML = 'Total do crédito: <b>'+moeda(total)+'</b> — escritório '+moeda(esc)+' · cliente '+moeda(cli)
-    + (esc < 0 || cli < 0 ? ' <span class="neg">(um dos lados ficou negativo)</span>' : '');
+  if (aviso) aviso.innerHTML = 'Total do crédito: <b>'+moeda(total)+'</b> — escritório '+moeda(esc)
+    + ' (<b>'+pctSobre(esc, total)+'</b>) · cliente '+moeda(cli)+' (<b>'+pctSobre(cli, total)+'</b>)'
+    + (esc < 0 || cli < 0 ? ' <span class="neg">— um dos lados ficou negativo</span>' : '');
   const rep = document.getElementById('boxRepasse');
   if (rep){
     rep.style.display = cli > 0 ? 'block' : 'none';
@@ -2275,12 +2282,12 @@ function telaRecebidas(){
   const t = FILTROS.busca, mes = FILTROS.fMesX || '';
   let L = (DB.PARCELAS||[]).filter(p => p.STATUS === 'Recebida').map(p => {
     const l = lancDe(p.LANC_ID);
-    return {id:p.ID, pasta:l.PASTA, cliente:l.CLIENTE, proc:l.N_PROCESSO,
+    return {id:p.ID, tipo:'parcela', pasta:l.PASTA, cliente:l.CLIENTE, proc:l.N_PROCESSO,
             desc:p.TIPO + (p.NUM>0?' '+p.NUM:''), data:p.DATA_CREDITO, valor:n(p.VALOR_CREDITADO||p.VALOR),
             cli:n(p.VALOR_CLIENTE), esc:n(p.VALOR_ESCRITORIO), tar:n(p.TARIFA), lanc:l.ID};
   });
   (DB.CONTAS_RECEBER||[]).filter(c => c.STATUS === 'Recebido').forEach(c =>
-    L.push({id:c.ID, pasta:'—', cliente:c.CLIENTE, proc:'', desc:c.DESCRICAO, data:c.DATA_RECEB,
+    L.push({id:c.ID, tipo:'avulso', pasta:'—', cliente:c.CLIENTE, proc:'', desc:c.DESCRICAO, data:c.DATA_RECEB,
             valor:n(c.VALOR), cli:n(c.VALOR_CLIENTE),
             esc:n(c.VALOR_ESCRITORIO) || n(c.VALOR), tar:0, lanc:''}));
 
@@ -2302,11 +2309,97 @@ function telaRecebidas(){
     + '<th class="num">Valor</th><th class="num">Cliente</th><th class="num">Tarifa</th><th class="num">Escritório</th><th></th></tr></thead><tbody>'
     + (L.length ? L.map(r => '<tr><td>'+dataBR(r.data)+'</td>'
       + '<td>'+pastaCliente(r.pasta, r.cliente)+'</td><td>'+esc(r.desc)+'</td>'
-      + '<td class="num">'+nMoeda(r.valor)+'</td><td class="num">'+nMoeda(r.cli)+'</td>'
-      + '<td class="num">'+(r.tar?nMoeda(r.tar):'—')+'</td><td class="num pos">'+nMoeda(r.esc)+'</td>'
-      + '<td style="text-align:right">'+(r.lanc?'<button class="btn sm sec" onclick="verParcelas(\''+r.lanc+'\')">Ver pasta</button>':'')+'</td></tr>').join('')
+      + '<td class="num">'+nMoeda(r.valor)+'</td>'
+      + '<td class="num">'+nMoeda(r.cli)+'<div class="mini">'+pctSobre(r.cli, r.valor)+'</div></td>'
+      + '<td class="num">'+(r.tar?nMoeda(r.tar):'—')+'</td>'
+      + '<td class="num pos">'+nMoeda(r.esc)+'<div class="mini">'+pctSobre(r.esc, r.valor)+'</div></td>'
+      + '<td style="text-align:right;white-space:nowrap">'
+      + (r.tipo === 'parcela'
+          ? '<button class="btn sm sec" onclick="verParcelas(\''+r.lanc+'\')">Ver pasta</button> '
+            + '<button class="btn sm sec" onclick="formLanc(\''+r.lanc+'\')">Editar</button>'
+          : '<button class="btn sm sec" onclick="formRecebida(\''+r.id+'\')">Editar</button>')
+      + '</td></tr>').join('')
       : '<tr><td colspan="8">'+vazio('Nada recebido ainda','Concilie um crédito para que ele apareça aqui.')+'</td></tr>')
     + '</tbody></table></div></div>';
+}
+
+/* edição de um recebimento avulso já conciliado: dados e divisão com o cliente */
+function formRecebida(id){
+  const c = (DB.CONTAS_RECEBER||[]).find(x => x.ID === id); if (!c) return;
+  const total = n(c.VALOR);
+  const esc0 = n(c.VALOR_ESCRITORIO) || total, cli0 = n(c.VALOR_CLIENTE);
+  RECEBIDA_ID = id;
+  modal('Editar recebimento — ' + moeda(total),
+    '<p class="mini" style="margin-bottom:14px">Crédito de <b>'+moeda(total)+'</b> conciliado em '+dataBR(c.DATA_RECEB)
+    + '. O valor total vem do extrato e não muda aqui — para alterá-lo, desfaça a conciliação.</p>'
+    + '<div class="grade">'
+    + inp('reDesc','Descrição', c.DESCRICAO, 'full')
+    + inp('reCliente','Cliente', c.CLIENTE)
+    + sel('reCat','Categoria (crédito)', opcoesCategorias('C', c.CATEGORIA, '— selecione —'), c.CATEGORIA)
+    + '<div class="secao-form">Divisão do valor</div>'
+    + inp('reEsc','Valor do escritório (R$)', nMoeda(esc0), '', 'text', 'oninput="sincronizaRecebida(\'esc\')"')
+    + inp('reCli','Valor do cliente (R$)', nMoeda(cli0), '', 'text', 'oninput="sincronizaRecebida(\'cli\')"')
+    + '<p class="mini full" id="avisoRecebida" style="margin:-4px 0 2px"></p>'
+    + '<div class="campo full"><label for="reObs">Observações</label><textarea id="reObs" rows="2">'+esc(c.OBS||'')+'</textarea></div>'
+    + '</div>',
+    '<button class="btn sec" onclick="fecharModal()">Cancelar</button>'
+    + '<button class="btn" onclick="gravarRecebida(\''+id+'\','+total+')">Salvar</button>');
+  sincronizaRecebida('esc', total);
+}
+function sincronizaRecebida(origem, totalFixo){
+  const c = (DB.CONTAS_RECEBER||[]).find(x => x.ID === RECEBIDA_ID);
+  const total = totalFixo != null ? totalFixo : (c ? n(c.VALOR) : 0);
+  const eEsc = document.getElementById('reEsc'), eCli = document.getElementById('reCli');
+  if (!eEsc || !eCli) return;
+  if (origem === 'esc') eCli.value = nMoeda(rd(total - n(eEsc.value)));
+  else eEsc.value = nMoeda(rd(total - n(eCli.value)));
+  const esc2 = rd(n(eEsc.value)), cli2 = rd(n(eCli.value));
+  const aviso = document.getElementById('avisoRecebida');
+  if (aviso) aviso.innerHTML = 'Escritório '+moeda(esc2)+' (<b>'+pctSobre(esc2, total)+'</b>) · cliente '
+    + moeda(cli2)+' (<b>'+pctSobre(cli2, total)+'</b>)'
+    + (esc2 < 0 || cli2 < 0 ? ' <span class="neg">— um dos lados ficou negativo</span>' : '');
+}
+let RECEBIDA_ID = '';
+async function gravarRecebida(id, total){
+  RECEBIDA_ID = id;
+  const c = (DB.CONTAS_RECEBER||[]).find(x => x.ID === id); if (!c) return;
+  const esc2 = rd(n(val('reEsc'))), cli2 = rd(n(val('reCli')));
+  if (esc2 < 0 || cli2 < 0) return toast('Os valores não podem ser negativos.','erro');
+  if (Math.abs(rd(esc2 + cli2) - rd(total)) > 0.01)
+    return toast('A soma tem que fechar com o valor recebido ('+moeda(total)+').','erro');
+
+  const cp = (DB.CONTAS_PAGAR||[]).find(x => x.ID === c.CP_ID);
+  if (cp && cp.STATUS === 'Pago' && rd(n(cp.VALOR)) !== cli2)
+    return toast('O repasse ao cliente já foi pago. Desfaça a baixa dele antes de mudar a divisão.','erro');
+
+  const lote = [], apagar = [];
+  let cpId = c.CP_ID || '';
+  if (cli2 > 0){
+    if (!cpId) cpId = uid('cp');
+    lote.push({aba:'CONTAS_PAGAR', registro: Object.assign({}, cp || {}, {
+      ID:cpId, DESCRICAO:'Repasse ao cliente — ' + tit(val('reDesc')), FAVORECIDO:tit(val('reCliente')),
+      CATEGORIA:(cp && cp.CATEGORIA) || 'Repasse a cliente', VENCIMENTO:(cp && cp.VENCIMENTO) || c.DATA_RECEB,
+      VALOR:cli2, STATUS:(cp && cp.STATUS) || 'Em aberto', DATA_PGTO:(cp && cp.DATA_PGTO) || '',
+      ORIGEM:'Repasse de recebimento', PARCELA_ID:'', ANEXO_URL:'',
+      OBS:'Crédito de '+moeda(total)+' em '+dataBR(c.DATA_RECEB)+' · escritório '+moeda(esc2)
+          +' ('+pctSobre(esc2,total)+') · cliente '+moeda(cli2)+' ('+pctSobre(cli2,total)+')'})});
+  } else if (cp && cp.STATUS !== 'Pago'){
+    apagar.push({aba:'CONTAS_PAGAR', id:cp.ID});
+    cpId = '';
+  }
+  lote.push({aba:'CONTAS_RECEBER', registro: Object.assign({}, c, {
+    DESCRICAO:tit(val('reDesc')), CLIENTE:tit(val('reCliente')), CATEGORIA:val('reCat'),
+    VALOR_ESCRITORIO:esc2, VALOR_CLIENTE:cli2, CP_ID:cpId, OBS:val('reObs')})});
+
+  fecharModal();
+  try{
+    if (apagar.length){
+      apagar.forEach(a => { DB[a.aba] = (DB[a.aba]||[]).filter(x => x.ID !== a.id); });
+      await api({action:'excluirLote', lote:apagar});
+    }
+    await salvarLoteRapido(lote);
+    toast('Recebimento atualizado.','ok');
+  }catch(e){}
 }
 
 /* ══════════════════ CONTAS A PAGAR ══════════════════ */
