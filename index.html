@@ -63,12 +63,20 @@ header .quem{font-size:12px;opacity:.8;text-align:right}
 .net.off i,.net.erro i{background:#ff8b7a}
 .net.off,.net.erro{background:rgba(255,120,100,.22)}
 @keyframes pulsa{0%,100%{opacity:1}50%{opacity:.3}}
-.conc{display:grid;grid-template-columns:minmax(240px,320px) 1fr;gap:20px;align-items:start}
-.conc .lado{border-right:1px solid var(--line2);padding-right:18px}
-.conc .lado .valor{font-family:'IBM Plex Mono',monospace;font-size:22px;font-weight:600;letter-spacing:-.5px;display:block;margin-bottom:4px}
-.conc .lado .acoes{display:flex;flex-direction:column;gap:6px;margin-top:12px}
-.conc .lado .acoes button{width:100%}
-@media(max-width:760px){.conc{grid-template-columns:1fr}.conc .lado{border-right:0;border-bottom:1px solid var(--line2);padding:0 0 14px}.conc .lado .acoes{flex-direction:row;flex-wrap:wrap}.conc .lado .acoes button{width:auto}}
+.conc{display:grid;grid-template-columns:minmax(220px,290px) 1fr;gap:14px;align-items:start}
+.conc .lado{border-right:1px solid var(--line2);padding-right:14px}
+.conc .lado .valor{font-family:'IBM Plex Mono',monospace;font-size:17px;font-weight:600;letter-spacing:-.4px;display:block;margin-bottom:2px}
+.conc .lado .hist{font-size:12px;line-height:1.35;color:var(--ink2);max-height:2.7em;overflow:hidden}
+.conc .lado .acoes{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px}
+.conc .lado .acoes button{padding:3px 8px;font-size:11.5px}
+.card.fino{margin-bottom:9px}
+.card.fino .corpo{padding:9px 12px}
+.card.fino .sug{padding:4px 9px;margin-bottom:3px;gap:8px}
+.card.fino .sug .info b{font-size:12.5px}
+.card.fino .sug .porq{font-size:11px;margin-top:0;line-height:1.3}
+.card.fino .score{font-size:10.5px;padding:1px 6px}
+.card.fino .btn.sm{padding:3px 9px;font-size:11.5px}
+@media(max-width:760px){.conc{grid-template-columns:1fr;gap:10px}.conc .lado{border-right:0;border-bottom:1px solid var(--line2);padding:0 0 10px}}
 .icobtn{width:34px;height:34px;border-radius:var(--r);border:1px solid rgba(255,255,255,.22);background:transparent;color:#fff;display:grid;place-items:center;font-size:16px}
 .icobtn:hover{background:rgba(255,255,255,.13)}
 
@@ -262,7 +270,7 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbzNNoolgJTQ5fKDmQ9ieSdW
 
 /* ── ESTADO ── */
 let DB = {}, USER = null, ABA = 'conciliacao', SUB = '', FILTROS = {};
-const A = { CONFIG:'CONFIG', USUARIOS:'USUARIOS', FILIAIS:'FILIAIS', SUBCLASSES:'SUBCLASSES',
+const A = { CONFIG:'CONFIG', USUARIOS:'USUARIOS', SUBCLASSES:'SUBCLASSES',
   COMISSIONADOS:'COMISSIONADOS', REGRAS:'REGRAS_COMISSAO', LANC:'LANCAMENTOS', PARC:'PARCELAS',
   EXT:'EXTRATO', CP:'CONTAS_PAGAR', CR:'CONTAS_RECEBER', COM:'COMISSOES' };
 
@@ -529,14 +537,14 @@ const parcDe = id => (DB.PARCELAS||[]).find(p => p.ID === id) || null;
 const nomeComissionado = id => ((DB.COMISSIONADOS||[]).find(c => c.ID === id) || {}).NOME || '—';
 const tarifaPadrao = () => n(cfg('TARIFA_PADRAO','2,50')) || 2.5;
 /* ══════════════════ CONFIGURAÇÕES (engrenagem) ══════════════════ */
-let CFGABA = 'filiais';
+let CFGABA = 'contas';
 function abrirConfig(aba){
   CFGABA = aba || CFGABA;
-  const abas = [['contas','Contas bancárias'],['favorecidos','Favorecidos'],['filiais','Filiais'],['pracas','Praças'],['subclasses','Categorias'],['usuarios','Usuários'],
+  const abas = [['contas','Contas bancárias'],['favorecidos','Favorecidos'],['pracas','Praças'],['subclasses','Categorias'],['usuarios','Usuários'],
                 ['regras','Regras de comissão'],['geral','Geral']];
   const menu = '<div class="subtabs">' + abas.map(([k,t]) =>
     '<button class="'+(CFGABA===k?'on':'')+'" onclick="abrirConfig(\''+k+'\')">'+t+'</button>').join('') + '</div>';
-  const corpo = { contas:cfgContas, favorecidos:cfgFavorecidos, filiais:cfgFiliais, pracas:cfgPracas, usuarios:cfgUsuarios, subclasses:cfgSubclasses,
+  const corpo = { contas:cfgContas, favorecidos:cfgFavorecidos, pracas:cfgPracas, usuarios:cfgUsuarios, subclasses:cfgSubclasses,
                   comissionados:cfgRegras, regras:cfgRegras, geral:cfgGeral }[CFGABA]();
   modal('Configurações', menu + corpo, '<button class="btn sec" onclick="fecharModal()">Fechar</button>', 'larga');
 }
@@ -700,35 +708,6 @@ function opcoesContas(comTodas){
   const L = (DB.CONTAS_BANCO||[]).filter(c => c.ATIVO !== 'NAO');
   return (comTodas ? [['','Todas as contas']] : [['','— selecione —']])
     .concat(L.map(c => [c.NOME, c.NOME + (c.BANCO ? ' · ' + c.BANCO : '')]));
-}
-
-/* Filiais */
-function cfgFiliais(){
-  const L = (DB.FILIAIS||[]);
-  const linhas = L.length ? L.map(f =>
-    '<tr><td><b>'+esc(f.NOME)+'</b></td><td>'+esc(f.CNPJ||'—')+'</td><td>'+esc(f.CIDADE||'—')+'</td>'
-    + '<td><span class="tag '+(f.ATIVO==='NAO'?'t-neutro':'t-ok')+'">'+(f.ATIVO==='NAO'?'Inativa':'Ativa')+'</span></td>'
-    + '<td style="text-align:right;white-space:nowrap"><button class="btn sm sec" onclick="formFilial(\''+f.ID+'\')">Editar</button> '
-    + '<button class="btn sm per" onclick="apagarReg(\'FILIAIS\',\''+f.ID+'\',\''+esc(f.NOME)+'\',\'filiais\')">Excluir</button></td></tr>').join('')
-    : '<tr><td colspan="5" class="vazio">Nenhuma filial cadastrada. Crie a primeira para organizar os lançamentos.</td></tr>';
-  return '<div style="display:flex;margin-bottom:12px"><button class="btn" onclick="formFilial()">Nova filial</button></div>'
-    + tabelaSimples([{t:'Nome'},{t:'CNPJ'},{t:'Cidade'},{t:'Situação'},{t:''}], linhas);
-}
-function formFilial(id){
-  const f = (DB.FILIAIS||[]).find(x => x.ID === id) || {};
-  modal(id ? 'Editar filial' : 'Nova filial',
-    '<div class="grade">'
-    + inp('flNome','Nome da filial', f.NOME, 'full')
-    + inp('flCnpj','CNPJ', f.CNPJ)
-    + inp('flCidade','Cidade', f.CIDADE)
-    + '<div class="campo"><label>Situação</label><select id="flAtivo"><option value="SIM">Ativa</option><option value="NAO"'+(f.ATIVO==='NAO'?' selected':'')+'>Inativa</option></select></div>'
-    + '</div>',
-    '<button class="btn sec" onclick="abrirConfig(\'filiais\')">Cancelar</button><button class="btn" onclick="gravarFilial(\''+(id||'')+'\')">Salvar filial</button>', 'estreita');
-}
-async function gravarFilial(id){
-  if (!val('flNome')) return toast('Informe o nome da filial.','erro');
-  await salvar('FILIAIS', {ID:id||'', NOME:tit(val('flNome')), CNPJ:val('flCnpj'), CIDADE:tit(val('flCidade')), ATIVO:val('flAtivo')});
-  abrirConfig('filiais'); render();
 }
 
 /* Usuários */
@@ -1043,10 +1022,10 @@ function sel(id, rot, opcoes, v, cls, extra){
 }
 /* ══════════════════ LANÇAMENTOS ══════════════════ */
 function telaLancamentos(){
-  const t = FILTROS.busca, fSub = FILTROS.fSub || '', fFil = FILTROS.fFil || '';
+  const t = FILTROS.busca, fSub = FILTROS.fSub || '', fPra = FILTROS.fPra || '';
   const L = (DB.LANCAMENTOS||[])
     .filter(l => casa(l, ['PASTA','CLIENTE','N_PROCESSO','PRACA','DOC','SUBCLASSE'], t))
-    .filter(l => (!fSub || l.SUBCLASSE === fSub) && (!fFil || l.FILIAL === fFil))
+    .filter(l => (!fSub || l.SUBCLASSE === fSub) && (!fPra || l.PRACA === fPra))
     .sort((a,b) => String(b.CRIADO_EM||'').localeCompare(String(a.CRIADO_EM||'')));
 
   const linhas = L.length ? L.map(l => {
@@ -1072,7 +1051,7 @@ function telaLancamentos(){
       '<button class="btn" onclick="formLanc()">Novo lançamento</button>')
     + '<div class="filtros">' + campoBusca('Pasta, cliente, processo…')
     + sel('fSub','Categoria', [['','Todas']].concat(categorias('C').map(nm => [nm,nm])), fSub, '', 'onchange="setF(\'fSub\',this.value)"')
-    + sel('fFil','Filial', [['','Todas']].concat((DB.FILIAIS||[]).map(f => [f.NOME,f.NOME])), fFil, '', 'onchange="setF(\'fFil\',this.value)"')
+    + sel('fPra','Praça', [['','Todas']].concat((DB.PRACAS||[]).map(p => [p.NOME,p.NOME])), fPra, '', 'onchange="setF(\'fPra\',this.value)"')
     + '</div>'
     + '<div class="card"><div class="tw"><table><thead><tr><th>Pasta / cliente</th><th>Processo / praça</th><th>Categoria</th>'
     + '<th class="num">Valor total</th><th class="num">Sucumbência</th><th class="num">Rateio</th><th>Recebido</th><th></th></tr></thead>'
@@ -1088,20 +1067,18 @@ function formLanc(id){
                     .map(p => ({ID:p.ID, VENCIMENTO:p.VENCIMENTO, VALOR:n(p.VALOR), STATUS:p.STATUS}))
                 : [];
   const subs = opcoesCategorias('C', l.SUBCLASSE, '— selecione —');
-  const fils = [['','— selecione —']].concat((DB.FILIAIS||[]).filter(f => f.ATIVO !== 'NAO').map(f => [f.NOME, f.NOME]));
   const prcs = [['','— selecione —']].concat((DB.PRACAS||[]).filter(f => f.ATIVO !== 'NAO')
                  .map(f => [f.NOME, f.NOME + (f.UF ? ' / ' + f.UF : '')]));
   // valor gravado que já não existe mais no cadastro continua visível para não sumir do lançamento
-  [[prcs, l.PRACA], [fils, l.FILIAL], [subs, l.SUBCLASSE]].forEach(([lista, v]) => {
+  [[prcs, l.PRACA], [subs, l.SUBCLASSE]].forEach(([lista, v]) => {
     if (v && !lista.some(o => o[0] === v)) lista.push([v, v + ' (fora do cadastro)']);
   });
   const faltando = [];
   if (!(DB.PRACAS||[]).length) faltando.push('praças');
-  if (!(DB.FILIAIS||[]).length) faltando.push('filiais');
   if (!categorias('C').length) faltando.push('categorias de crédito');
   const aviso = faltando.length
     ? '<div class="erro" style="margin-bottom:14px">Ainda não há '+faltando.join(', ')+' no cadastro. '
-      + '<button class="btn sm sec" onclick="abrirConfig(\''+(faltando[0]==='praças'?'pracas':faltando[0]==='filiais'?'filiais':'subclasses')+'\')">Abrir cadastro</button></div>'
+      + '<button class="btn sm sec" onclick="abrirConfig(\''+(faltando[0]==='praças'?'pracas':'subclasses')+'\')">Abrir cadastro</button></div>'
     : '';
 
   modal(id ? 'Editar lançamento' : 'Novo lançamento',
@@ -1111,7 +1088,6 @@ function formLanc(id){
     + inp('lcDoc','CPF / CNPJ do cliente', l.DOC)
     + inp('lcProc','Nº do processo', l.N_PROCESSO)
     + sel('lcPraca','Praça', prcs, l.PRACA)
-    + sel('lcFilial','Filial', fils, l.FILIAL)
     + sel('lcSub','Categoria', subs, l.SUBCLASSE)
     + '<div class="check"><input type="checkbox" id="lcExez"'+(l.EXEZ==='SIM'?' checked':'')+'><label for="lcExez">Cálculo feito pela EXEZ</label></div>'
 
@@ -1176,7 +1152,7 @@ async function gravarLanc(id){
 
   const lanc = {
     ID: id || uid('l'), PASTA: tit(val('lcPasta')), CLIENTE: tit(val('lcCliente')), DOC: val('lcDoc'),
-    N_PROCESSO: val('lcProc'), PRACA: val('lcPraca'), FILIAL: val('lcFilial'),
+    N_PROCESSO: val('lcProc'), PRACA: val('lcPraca'), FILIAL: '',
     VALOR_TOTAL: rd(PARC_TMP.reduce((s,p)=>s+n(p.VALOR),0)), QTD_PARCELAS: PARC_TMP.length,
     PCT_CLIENTE: pctCli, PCT_ESCRITORIO: pctEsc,
     TARIFA_ATIVA: val('lcTarifa') ? 'SIM' : 'NAO', TARIFA_VALOR: rd(n(val('lcTarifaV'))),
@@ -1372,8 +1348,8 @@ function boxSugestoes(mov, ignorarData, vazioTxt){
                            : 'Sem correspondência em contas a receber.')) + '</p>';
   return sg.map(x =>
     '<div class="sug"><div class="info"><b>'+esc(x.c.titulo)+'</b> · '+moeda(x.c.valor)
-    + ' <span class="mini">('+esc(x.c.sub)+', venc. '+dataBR(x.c.venc)+')</span>'
-    + '<div class="porq">'+esc(x.c.detalhe)+(x.c.detalhe?' — ':'')+esc(x.por.join('; '))+'</div></div>'
+    + ' <span class="mini">'+esc(x.c.sub)+' · venc. '+dataBR(x.c.venc)+'</span>'
+    + '<div class="porq" title="'+esc(x.por.join('; '))+'">'+esc(x.c.detalhe)+(x.c.detalhe?' — ':'')+esc(x.por.join('; '))+'</div></div>'
     + '<span class="score '+(x.score>=80?'alto':x.score<40?'baixo':'')+'">'+x.score+'</span>'
     + '<button class="btn sm ok" onclick="conciliar(\''+mov.ID+'\',\''+x.c.id+'\')">'
     + (deb ? 'Conciliar pagamento' : 'Conciliar') + '</button></div>').join('');
@@ -1441,36 +1417,34 @@ function listaPendentes(pend){
     + sel('fTipoMov','Tipo', [['','Créditos e débitos'],['C','Só créditos'],['D','Só débitos']], tipo, '', 'onchange="setF(\'fTipoMov\',this.value)"')
     + '</div>';
   if (!L.length) return filtros + '<div class="card">'+vazio('Nada neste filtro','Ajuste a busca ou o tipo de movimento.')+'</div>';
-  return filtros + L.map(m => '<div class="card"><div class="corpo conc">'
+  return filtros + L.map(m => '<div class="card fino"><div class="corpo conc">'
       + ladoMovimento(m)
-      + '<div class="sugs"><p class="mini" style="margin-bottom:7px">'
-      + (ehDebito(m) ? 'Contas a pagar compatíveis:' : 'Registros em aberto compatíveis:') + '</p>'
-      + boxSugestoes(m) + '</div></div></div>').join('');
+      + '<div class="sugs">' + boxSugestoes(m) + '</div></div></div>').join('');
 }
 function ladoMovimento(m, extras){
   return '<div class="lado">'
+    + '<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">'
     + '<span class="valor '+(ehDebito(m)?'neg':'pos')+'">'+moeda(m.VALOR)+'</span>'
-    + '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">'
     + '<span class="tag '+(ehDebito(m)?'t-ni':'t-ok')+'">'+(ehDebito(m)?'Débito':'Crédito')+'</span>'
     + '<span class="mini">'+dataBR(m.DATA)+(m.BANCO?' · '+esc(m.BANCO):'')+'</span></div>'
-    + '<div style="font-size:12.5px;line-height:1.4">'+esc(m.IDENTIFICACAO||'—')+'</div>'
+    + '<div class="hist" title="'+esc(m.IDENTIFICACAO||'')+'">'+esc(m.IDENTIFICACAO||'—')+'</div>'
     + '<div class="acoes">'
-    + '<button class="btn sm sec" onclick="escolherManual(\''+m.ID+'\')">Escolher manualmente</button>'
+    + '<button class="btn sm sec" onclick="escolherManual(\''+m.ID+'\')">Vincular</button>'
     + '<button class="btn sm sec" onclick="formNovoNaConciliacao(\''+m.ID+'\')">'
-      + (ehDebito(m) ? 'Lançar nova conta a pagar' : 'Lançar novo recebimento') + '</button>'
-    + (extras || ('<button class="btn sm sec" onclick="marcarNaoIdentificado(\''+m.ID+'\')">Marcar como não identificado</button>'
-                + '<button class="btn sm per" onclick="excluirMov(\''+m.ID+'\')">Excluir movimento</button>'))
+      + (ehDebito(m) ? 'Nova conta' : 'Novo recebimento') + '</button>'
+    + (extras || ('<button class="btn sm sec" onclick="marcarNaoIdentificado(\''+m.ID+'\')">Não identificado</button>'
+                + '<button class="btn sm per" onclick="excluirMov(\''+m.ID+'\')">Excluir</button>'))
     + '</div></div>';
 }
 function listaNaoIdentificados(L){
   if (!L.length) return '<div class="card">'+vazio('Nenhum movimento não identificado','Depósitos sem origem aparecem aqui com sugestões de pastas de mesmo valor.')+'</div>';
   return L.sort((a,b) => String(a.DATA).localeCompare(String(b.DATA))).map(m =>
-    '<div class="card"><div class="corpo conc">'
+    '<div class="card fino"><div class="corpo conc">'
     + ladoMovimento(m, '<button class="btn sm sec" onclick="voltarPendente(\''+m.ID+'\')">Voltar para pendentes</button>'
-                     + '<button class="btn sm per" onclick="excluirMov(\''+m.ID+'\')">Excluir movimento</button>')
-    + '<div class="sugs"><p class="mini" style="margin-bottom:7px">'
+                     + '<button class="btn sm per" onclick="excluirMov(\''+m.ID+'\')">Excluir</button>')
+    + '<div class="sugs"><p class="mini" style="margin-bottom:5px">'
     + (ehDebito(m) ? 'Contas a pagar em aberto com o mesmo valor:'
-                   : 'Pastas em aberto com o mesmo valor — inclusive acordos lançados depois da data do crédito:') + '</p>'
+                   : 'Pastas em aberto com o mesmo valor, inclusive acordos lançados depois do crédito:') + '</p>'
     + boxSugestoes(m, true, 'Nenhum registro em aberto com esse valor. Assim que o acordo for lançado, a sugestão aparece aqui.')
     + '</div></div></div>').join('');
 }
@@ -1755,8 +1729,6 @@ function formNovoNaConciliacao(movId){
         inp('ncPasta','Pasta do cliente', '')
       + sel('ncPraca','Praça', [['','— selecione —']].concat((DB.PRACAS||[]).filter(x => x.ATIVO !== 'NAO')
           .map(x => [x.NOME, x.NOME + (x.UF ? ' / ' + x.UF : '')])), '')
-      + sel('ncFilial','Filial', [['','— selecione —']].concat((DB.FILIAIS||[]).filter(x => x.ATIVO !== 'NAO')
-          .map(x => [x.NOME, x.NOME])), '')
       + '<div class="check"><input type="checkbox" id="ncExez"><label for="ncExez">Cálculo feito pela EXEZ</label></div>')
     + '<div class="campo full"><label for="ncObs">Observações</label><textarea id="ncObs" rows="2"></textarea></div>'
     + (deb ? '' : '<div class="full" id="boxRateio"></div><div class="full" id="boxRepasse" style="display:none"></div>')
@@ -1866,7 +1838,7 @@ async function gravarNovoNaConciliacao(movId){
       if (esc < 0 || cli < 0) return toast('Com a tarifa, um dos lados ficou negativo. Revise os valores.','erro');
     }
     const dadosCR = {DESCRICAO:tit(val('ncDesc')), CLIENTE:tit(val('ncQuem')), PASTA:tit(val('ncPasta')),
-      PRACA:val('ncPraca'), FILIAL:val('ncFilial'), EXEZ: val('ncExez') ? 'SIM' : 'NAO'};
+      PRACA:val('ncPraca'), FILIAL:'', EXEZ: val('ncExez') ? 'SIM' : 'NAO'};
     let cpId = '';
     if (cli > 0){
       const vRep = rd(n(val('rpValor'))) || cli;
@@ -2404,7 +2376,6 @@ function dadosDoRecebimento(cr){
   const p = [];
   if (cr.PASTA) p.push('pasta ' + cr.PASTA);
   if (cr.PRACA) p.push('praça ' + cr.PRACA);
-  if (cr.FILIAL) p.push('filial ' + cr.FILIAL);
   if (cr.EXEZ === 'SIM') p.push('cálculo pela EXEZ');
   return p.join(' · ');
 }
@@ -2437,8 +2408,6 @@ function formRecebida(id){
     + inp('rePasta','Pasta do cliente', c.PASTA)
     + sel('rePraca','Praça', [['','— selecione —']].concat((DB.PRACAS||[]).filter(x => x.ATIVO !== 'NAO' || x.NOME === c.PRACA)
         .map(x => [x.NOME, x.NOME + (x.UF ? ' / ' + x.UF : '')])), c.PRACA)
-    + sel('reFilial','Filial', [['','— selecione —']].concat((DB.FILIAIS||[]).filter(x => x.ATIVO !== 'NAO' || x.NOME === c.FILIAL)
-        .map(x => [x.NOME, x.NOME])), c.FILIAL)
     + '<div class="check"><input type="checkbox" id="reExez"'+(c.EXEZ==='SIM'?' checked':'')+'>'
       + '<label for="reExez">Cálculo feito pela EXEZ</label></div>'
     + '<div class="secao-form">Divisão do valor</div>'
@@ -2498,7 +2467,7 @@ async function gravarRecebida(id, total){
   }
   const atualizado = Object.assign({}, c, {
     DESCRICAO:tit(val('reDesc')), CLIENTE:tit(val('reCliente')), CATEGORIA:val('reCat'),
-    PASTA:tit(val('rePasta')), PRACA:val('rePraca'), FILIAL:val('reFilial'),
+    PASTA:tit(val('rePasta')), PRACA:val('rePraca'), FILIAL:'',
     EXEZ: val('reExez') ? 'SIM' : 'NAO',
     VALOR_ESCRITORIO:esc2, VALOR_CLIENTE:cli2, CP_ID:cpId, TARIFA:tar, OBS:val('reObs')});
   lote.push({aba:'CONTAS_RECEBER', registro: atualizado});
