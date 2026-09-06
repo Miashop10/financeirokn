@@ -1856,6 +1856,7 @@ async function gravarNovoNaConciliacao(movId){
       if (!val('rpFav')) return toast('Informe o favorecido do repasse ao cliente.','erro');
       cpId = uid('cp');
       const favRep = garantirFavorecido(tit(val('rpFav')), val('rpCat') || 'Repasse a cliente');
+      // o vínculo com o recebimento fica no CP_ID da conta a receber, gravada logo abaixo
       if (favRep) lote.push(favRep);
       lote.push({aba:'CONTAS_PAGAR', registro:{ID:cpId,
         DESCRICAO: 'Repasse ao cliente — ' + tit(val('ncDesc')),
@@ -2440,12 +2441,16 @@ async function gravarRecebida(id, total){
 /* Um repasse ao cliente só pode ser pago depois que a parcela correspondente for conciliada.
    O sinal é lido da própria parcela, então nunca sai do lugar. */
 function liberacao(c){
-  if (!c.PARCELA_ID) return {tipo:'na'};
-  const p = parcDe(c.PARCELA_ID);
-  if (!p) return {tipo:'na'};
-  return p.STATUS === 'Recebida'
-    ? {tipo:'ok', p, titulo:'Recebido em ' + dataBR(p.DATA_CREDITO) + ' — liberado para pagamento'}
-    : {tipo:'nao', p, titulo:'Parcela ainda não conciliada — aguardando o crédito de ' + moeda(p.VALOR)};
+  const p = c.PARCELA_ID ? parcDe(c.PARCELA_ID) : null;
+  if (p) return p.STATUS === 'Recebida'
+    ? {tipo:'ok', p, quando:p.DATA_CREDITO, titulo:'Recebido em ' + dataBR(p.DATA_CREDITO) + ' — liberado para pagamento'}
+    : {tipo:'nao', p, quando:'', titulo:'Parcela ainda não conciliada — aguardando o crédito de ' + moeda(p.VALOR)};
+  // repasse gerado por um recebimento avulso: o vínculo é o CP_ID guardado na conta a receber
+  const cr = (DB.CONTAS_RECEBER||[]).find(x => x.CP_ID && x.CP_ID === c.ID);
+  if (cr) return cr.STATUS === 'Recebido'
+    ? {tipo:'ok', cr, quando:cr.DATA_RECEB, titulo:'Recebido em ' + dataBR(cr.DATA_RECEB) + ' — liberado para pagamento'}
+    : {tipo:'nao', cr, quando:'', titulo:'Recebimento ainda não conciliado — aguardando o crédito de ' + moeda(cr.VALOR)};
+  return {tipo:'na'};
 }
 function selo(c){
   const s = liberacao(c);
@@ -2480,7 +2485,7 @@ function origemCP(c){
   const partes = [];
   if (c.ORIGEM && c.ORIGEM !== 'Manual') partes.push(c.ORIGEM);
   const lb = liberacao(c);
-  if (lb.tipo === 'ok') partes.push('recebido em ' + dataBR(lb.p.DATA_CREDITO));
+  if (lb.tipo === 'ok') partes.push('recebido em ' + dataBR(lb.quando));
   else if (lb.tipo === 'nao') partes.push('aguardando recebimento');
   return partes.length ? '<div class="mini">'+esc(partes.join(' · '))+'</div>' : '';
 }
