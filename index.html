@@ -300,6 +300,26 @@ function diasEntre(a,b){
   return Math.abs((new Date(a+'T12:00') - new Date(b+'T12:00')) / 86400000);
 }
 const digitos = s => String(s||'').replace(/\D/g,'');
+
+/* ── Padrão de escrita: nada entra em CAIXA ALTA ──
+   Primeira letra de cada palavra maiúscula, o resto minúsculo.
+   Preserva siglas conhecidas, palavras com número e conectores. */
+const SIGLAS = new Set(['FGTS','INSS','CNPJ','CPF','PIS','PASEP','ISS','IRRF','IR','TST','TRT','STJ','STF',
+  'CLT','RPV','OAB','DARF','GPS','DAS','ME','EPP','MEI','PJ','SA','EXEZ','FGV','IPTU','IPVA','ICMS','TED','PIX','DOC']);
+const CONECTORES = new Set(['de','da','do','das','dos','e','em','no','na','nos','nas','a','o','as','os',
+  'para','com','por','sob','sobre','ao','aos','à','às','um','uma']);
+function tit(txt){
+  const s = String(txt == null ? '' : txt).trim().replace(/\s+/g,' ');
+  if (!s) return '';
+  return s.split(' ').map((p, i) => {
+    if (/\d/.test(p)) return p;                                   // 1234-5, 0010543-12.2024…
+    const limpo = p.replace(/[^A-Za-zÀ-ÿ]/g,'').toUpperCase();
+    if (SIGLAS.has(limpo)) return p.toUpperCase();
+    const min = p.toLocaleLowerCase('pt-BR');
+    if (i > 0 && CONECTORES.has(min)) return min;
+    return min.charAt(0).toLocaleUpperCase('pt-BR') + min.slice(1);
+  }).join(' ');
+}
 const mesDe = iso => String(iso||'').slice(0,7);
 function mesBR(ym){
   if (!ym) return '—';
@@ -539,7 +559,7 @@ function formFavorecido(id){
     '<button class="btn sec" onclick="abrirConfig(\'favorecidos\')">Cancelar</button><button class="btn" onclick="gravarFavorecido(\''+(id||'')+'\',\''+esc(f.NOME||'')+'\')">Salvar favorecido</button>', 'estreita');
 }
 async function gravarFavorecido(id, antigo){
-  const nome = val('fvNome');
+  const nome = tit(val('fvNome'));
   if (!nome) return toast('Informe o nome do favorecido.','erro');
   if ((DB.FAVORECIDOS||[]).some(f => f.ID !== id && f.NOME.toLowerCase() === nome.toLowerCase()))
     return toast('Já existe um favorecido com esse nome.','erro');
@@ -552,18 +572,30 @@ async function gravarFavorecido(id, antigo){
   try{ await salvarLote(lote); abrirConfig('favorecidos'); render(); toast('Favorecido salvo.','ok'); }
   catch(e){ toast(e.message,'erro'); } finally{ carregandoOff(); }
 }
-/* cadastra na hora, sem sair do formulário que estiver aberto */
-async function addFavorecidoRapido(campoId){
+/* cadastra na hora, sem sair do formulário que estiver aberto.
+   A categoria escolhida no formulário já entra como categoria padrão do favorecido. */
+async function addFavorecidoRapido(campoId, campoCat){
   const nome = val(campoId);
   if (!nome) return toast('Digite o nome do favorecido antes de adicionar.','erro');
-  if ((DB.FAVORECIDOS||[]).some(f => f.NOME.toLowerCase() === nome.toLowerCase()))
-    return toast('"'+nome+'" já está cadastrado.','ok');
+  const cat = campoCat ? val(campoCat) : '';
+  const item = garantirFavorecido(tit(nome), cat);
+  if (!item) return toast('"'+nome+'" já está cadastrado.','ok');
   try{
-    await salvarLoteRapido([{aba:'FAVORECIDOS', registro:{ID:uid('fv'), NOME:nome, DOC:'', CATEGORIA:'', ATIVO:'SIM'}}]);
+    await salvarLoteRapido([item]);
     const dl = document.getElementById('dlFav');
     if (dl) dl.innerHTML = optsFavorecidos();
-    toast('"'+nome+'" cadastrado nos favorecidos.','ok');
+    toast('"'+nome+'" cadastrado' + (cat ? ' com a categoria padrão "'+cat+'".' : ' nos favorecidos.'), 'ok');
   }catch(e){}
+}
+/* devolve o registro a gravar quando o favorecido não existe, ou existe sem categoria padrão */
+function garantirFavorecido(nome, categoria){
+  const nm = tit(nome);
+  if (!nm) return null;
+  const f = (DB.FAVORECIDOS||[]).find(x => String(x.NOME).toLowerCase() === nm.toLowerCase());
+  if (!f) return {aba:'FAVORECIDOS', registro:{ID:uid('fv'), NOME:nm, DOC:'', CATEGORIA:categoria||'', ATIVO:'SIM'}};
+  if (categoria && !String(f.CATEGORIA||'').trim())
+    return {aba:'FAVORECIDOS', registro: Object.assign({}, f, {CATEGORIA:categoria})};
+  return null;
 }
 function optsFavorecidos(){
   return (DB.FAVORECIDOS||[]).filter(f => f.ATIVO !== 'NAO')
@@ -600,11 +632,11 @@ function formConta(id){
     '<button class="btn sec" onclick="abrirConfig(\'contas\')">Cancelar</button><button class="btn" onclick="gravarConta(\''+(id||'')+'\',\''+esc(c.NOME||'')+'\')">Salvar conta</button>', 'estreita');
 }
 async function gravarConta(id, antigo){
-  const nome = val('cbNome');
+  const nome = tit(val('cbNome'));
   if (!nome) return toast('Informe o apelido da conta.','erro');
   if ((DB.CONTAS_BANCO||[]).some(c => c.ID !== id && c.NOME.toLowerCase() === nome.toLowerCase()))
     return toast('Já existe uma conta com esse apelido.','erro');
-  const lote = [{aba:'CONTAS_BANCO', registro:{ID:id||'', NOME:nome, BANCO:val('cbBanco'),
+  const lote = [{aba:'CONTAS_BANCO', registro:{ID:id||'', NOME:nome, BANCO:tit(val('cbBanco')),
     AGENCIA:val('cbAg'), CONTA:val('cbConta'), ATIVO:val('cbAtivo')}}];
   // renomear a conta arrasta os movimentos já importados
   if (id && antigo && antigo !== nome){
@@ -653,7 +685,7 @@ function formFilial(id){
 }
 async function gravarFilial(id){
   if (!val('flNome')) return toast('Informe o nome da filial.','erro');
-  await salvar('FILIAIS', {ID:id||'', NOME:val('flNome'), CNPJ:val('flCnpj'), CIDADE:val('flCidade'), ATIVO:val('flAtivo')});
+  await salvar('FILIAIS', {ID:id||'', NOME:tit(val('flNome')), CNPJ:val('flCnpj'), CIDADE:tit(val('flCidade')), ATIVO:val('flAtivo')});
   abrirConfig('filiais'); render();
 }
 
@@ -686,7 +718,7 @@ function formUsuario(id){
 async function gravarUsuario(id){
   if (!val('usNome') || !val('usLogin')) return toast('Nome e login são obrigatórios.','erro');
   if (!id && !val('usSenha')) return toast('Defina uma senha para o novo usuário.','erro');
-  await salvar('USUARIOS', {ID:id||'', NOME:val('usNome'), LOGIN:val('usLogin'), SENHA:val('usSenha'),
+  await salvar('USUARIOS', {ID:id||'', NOME:tit(val('usNome')), LOGIN:val('usLogin').toLowerCase(), SENHA:val('usSenha'),
                             PERFIL:val('usPerfil'), ATIVO:val('usAtivo')});
   abrirConfig('usuarios');
 }
@@ -727,7 +759,7 @@ function cfgSubclasses(){
     + tabelaSimples([{t:'Categoria'},{t:'Tipo'},{t:''}], linhas);
 }
 async function addSubclasse(){
-  const nome = val('novaSub'); if (!nome) return toast('Informe o nome da categoria.','erro');
+  const nome = tit(val('novaSub')); if (!nome) return toast('Informe o nome da categoria.','erro');
   if ((DB.SUBCLASSES||[]).some(c => c.NOME.toLowerCase() === nome.toLowerCase()))
     return toast('Já existe uma categoria com esse nome.','erro');
   await salvar('SUBCLASSES', {ID:'', NOME:nome, TIPO:val('novaSubTipo'), RATEIO:''}); abrirConfig('subclasses');
@@ -744,7 +776,7 @@ function formSubclasse(id){
     '<button class="btn sec" onclick="abrirConfig(\'subclasses\')">Cancelar</button><button class="btn" onclick="gravarSubclasse(\''+id+'\',\''+esc(s.NOME)+'\')">Salvar</button>', 'estreita');
 }
 async function gravarSubclasse(id, antigo){
-  const nome = val('sbNome'); if (!nome) return toast('Informe o nome da categoria.','erro');
+  const nome = tit(val('sbNome')); if (!nome) return toast('Informe o nome da categoria.','erro');
   const lote = [{aba:'SUBCLASSES', registro:{ID:id, NOME:nome, TIPO:val('sbTipo'),
     RATEIO: (val('sbTipo').charAt(0).toLowerCase() !== 'd' && val('sbRateio')) ? 'SIM' : ''}}];
   (DB.REGRAS_COMISSAO||[]).filter(r => r.SUBCLASSE === antigo).forEach(r =>
@@ -781,7 +813,7 @@ function formPraca(id){
 }
 async function gravarPraca(id){
   if (!val('prNome')) return toast('Informe o nome da praça.','erro');
-  await salvar('PRACAS', {ID:id||'', NOME:val('prNome'), UF:val('prUf').toUpperCase(), ATIVO:val('prAtivo')});
+  await salvar('PRACAS', {ID:id||'', NOME:tit(val('prNome')), UF:val('prUf').toUpperCase(), ATIVO:val('prAtivo')});
   abrirConfig('pracas'); render();
 }
 
@@ -809,7 +841,7 @@ function formComissionado(id){
 }
 async function gravarComissionado(id){
   if (!val('cmNome')) return toast('Informe o nome.','erro');
-  await salvar('COMISSIONADOS', {ID:id||'', NOME:val('cmNome'), PCT_PADRAO:val('cmPct')||'0', ATIVO:val('cmAtivo')});
+  await salvar('COMISSIONADOS', {ID:id||'', NOME:tit(val('cmNome')), PCT_PADRAO:val('cmPct')||'0', ATIVO:val('cmAtivo')});
   abrirConfig('regras');
 }
 
@@ -943,7 +975,7 @@ function cfgGeral(){
 async function gravarGeral(){
   const acha = k => (DB.CONFIG||[]).find(c => c.CHAVE === k) || {ID:'', CHAVE:k};
   const a = acha('NOME_ESCRITORIO'), b = acha('TARIFA_PADRAO');
-  await salvarLote([{aba:'CONFIG', registro:{...a, VALOR:val('cgNome')}},
+  await salvarLote([{aba:'CONFIG', registro:{...a, VALOR:tit(val('cgNome'))}},
                     {aba:'CONFIG', registro:{...b, VALOR:val('cgTarifa')}}]);
   $('#hdEscritorio').textContent = val('cgNome') || 'Escritório de advocacia';
   toast('Configurações salvas.','ok'); abrirConfig('geral');
@@ -1101,7 +1133,7 @@ async function gravarLanc(id){
   if (rd(pctCli + pctEsc) !== 100) return toast('Os percentuais de cliente e escritório devem somar 100%.','erro');
 
   const lanc = {
-    ID: id || uid('l'), PASTA: val('lcPasta'), CLIENTE: val('lcCliente'), DOC: val('lcDoc'),
+    ID: id || uid('l'), PASTA: tit(val('lcPasta')), CLIENTE: tit(val('lcCliente')), DOC: val('lcDoc'),
     N_PROCESSO: val('lcProc'), PRACA: val('lcPraca'), FILIAL: val('lcFilial'),
     VALOR_TOTAL: rd(PARC_TMP.reduce((s,p)=>s+n(p.VALOR),0)), QTD_PARCELAS: PARC_TMP.length,
     PCT_CLIENTE: pctCli, PCT_ESCRITORIO: pctEsc,
@@ -1663,7 +1695,7 @@ function formNovoNaConciliacao(movId){
     + (deb
         ? '<div class="campo"><label for="ncQuem">Favorecido</label><div style="display:flex;gap:6px">'
           + '<input id="ncQuem" list="dlFav" autocomplete="off" placeholder="digite para buscar" style="flex:1;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r)">'
-          + '<button class="btn sec" style="padding:8px 12px" title="Adicionar aos favorecidos" onclick="addFavorecidoRapido(\'ncQuem\')">+</button></div>'
+          + '<button class="btn sec" style="padding:8px 12px" title="Adicionar aos favorecidos" onclick="addFavorecidoRapido(\'ncQuem\',\'ncCat\')">+</button></div>'
           + '<datalist id="dlFav">'+optsFavorecidos()+'</datalist></div>'
         : inp('ncQuem','Cliente', '', '', 'text', 'oninput="sincronizaFavorecido()"'))
     + sel('ncCat','Categoria', opcoesCategorias(deb ? 'D' : 'C', '', '— selecione —'), '', '', deb ? '' : 'onchange="montaRateio()"')
@@ -1720,7 +1752,7 @@ function montaRepasse(){
     + '<div class="grade">'
     + '<div class="campo"><label for="rpFav">Favorecido</label><div style="display:flex;gap:6px">'
       + '<input id="rpFav" list="dlFav" autocomplete="off" value="'+esc(val('ncQuem'))+'" placeholder="digite para buscar" oninput="this.dataset.tocado=1" style="flex:1;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r)">'
-      + '<button class="btn sec" style="padding:8px 12px" title="Adicionar aos favorecidos" onclick="addFavorecidoRapido(\'rpFav\')">+</button></div>'
+      + '<button class="btn sec" style="padding:8px 12px" title="Adicionar aos favorecidos" onclick="addFavorecidoRapido(\'rpFav\',\'rpCat\')">+</button></div>'
       + '<datalist id="dlFav">'+optsFavorecidos()+'</datalist></div>'
     + sel('rpCat','Categoria (débito)', opcoesCategorias('D', 'Repasse a cliente'), 'Repasse a cliente')
     + inp('rpVenc','Vencimento', mDatas ? mDatas.value : hoje(), '', 'date')
@@ -1743,7 +1775,9 @@ async function gravarNovoNaConciliacao(movId){
   const lote = [];
 
   if (deb){
-    lote.push({aba:'CONTAS_PAGAR', registro:{ID:id, DESCRICAO:val('ncDesc'), FAVORECIDO:val('ncQuem'),
+    const fav = garantirFavorecido(tit(val('ncQuem')), val('ncCat'));
+    if (fav) lote.push(fav);
+    lote.push({aba:'CONTAS_PAGAR', registro:{ID:id, DESCRICAO:tit(val('ncDesc')), FAVORECIDO:tit(val('ncQuem')),
       CATEGORIA:val('ncCat'), VENCIMENTO:val('ncVenc'), VALOR:valor, STATUS:'Em aberto', DATA_PGTO:'',
       ORIGEM:'Lançado na conciliação', PARCELA_ID:'', ANEXO_URL:'', OBS:val('ncObs')}});
   } else {
@@ -1760,14 +1794,16 @@ async function gravarNovoNaConciliacao(movId){
       const vRep = rd(n(val('rpValor'))) || cli;
       if (!val('rpFav')) return toast('Informe o favorecido do repasse ao cliente.','erro');
       cpId = uid('cp');
+      const favRep = garantirFavorecido(tit(val('rpFav')), val('rpCat') || 'Repasse a cliente');
+      if (favRep) lote.push(favRep);
       lote.push({aba:'CONTAS_PAGAR', registro:{ID:cpId,
-        DESCRICAO: val('rpObs') ? val('ncDesc') + ' — repasse ao cliente' : 'Repasse ao cliente — ' + val('ncDesc'),
-        FAVORECIDO:val('rpFav'), CATEGORIA:val('rpCat') || 'Repasse a cliente', VENCIMENTO:val('rpVenc') || m.DATA,
+        DESCRICAO: 'Repasse ao cliente — ' + tit(val('ncDesc')),
+        FAVORECIDO:tit(val('rpFav')), CATEGORIA:val('rpCat') || 'Repasse a cliente', VENCIMENTO:val('rpVenc') || m.DATA,
         VALOR:vRep, STATUS:'Em aberto', DATA_PGTO:'', ORIGEM:'Repasse de recebimento', PARCELA_ID:'', ANEXO_URL:'',
         OBS: (val('rpObs') ? val('rpObs') + ' · ' : '')
              + 'Crédito de ' + moeda(valor) + ' em ' + dataBR(m.DATA) + ' · escritório ' + moeda(esc) + ' · cliente ' + moeda(cli)}});
     }
-    lote.push({aba:'CONTAS_RECEBER', registro:{ID:id, DESCRICAO:val('ncDesc'), CLIENTE:val('ncQuem'),
+    lote.push({aba:'CONTAS_RECEBER', registro:{ID:id, DESCRICAO:tit(val('ncDesc')), CLIENTE:tit(val('ncQuem')),
       CATEGORIA:val('ncCat'), VENCIMENTO:val('ncVenc'), VALOR:valor, STATUS:'Em aberto', DATA_RECEB:'',
       ORIGEM:'Lançado na conciliação', ANEXO_URL:'', OBS:val('ncObs'),
       VALOR_ESCRITORIO:esc, VALOR_CLIENTE:cli, CP_ID:cpId}});
@@ -2011,7 +2047,7 @@ function previaImport(){
     + '<div class="kpi b"><div class="rot">Já importados nesta conta</div><div class="val">'+repetidos+'</div></div>'
     + '<div class="kpi p"><div class="rot">Soma</div><div class="val" style="font-size:17px">'+moeda(total)+'</div></div></div>'
     + '<div class="tw" style="max-height:280px;overflow:auto"><table><thead><tr><th>Data</th><th>Identificação</th><th class="num">Valor</th></tr></thead><tbody>'
-    + IMP.slice(0,150).map(m => '<tr><td>'+dataBR(m.DATA)+'</td><td>'+esc(m.IDENTIFICACAO||'—')+'</td><td class="num '+(n(m.VALOR)<0?'neg':'')+'">'+nMoeda(m.VALOR)+'</td></tr>').join('')
+    + IMP.slice(0,150).map(m => '<tr><td>'+dataBR(m.DATA)+'</td><td>'+esc(tit(m.IDENTIFICACAO)||'—')+'</td><td class="num '+(n(m.VALOR)<0?'neg':'')+'">'+nMoeda(m.VALOR)+'</td></tr>').join('')
     + '</tbody></table></div>' + (IMP.length > 150 ? '<p class="mini">Mostrando as 150 primeiras linhas.</p>' : '');
   $('#btnImp').disabled = IMP.length === 0;
 }
@@ -2024,7 +2060,7 @@ async function confirmarImport(){
     const loteId = uid('lt');
     const quando = new Date().toISOString().slice(0,16).replace('T',' ');
     const lote = IMP.map(m => ({aba:'EXTRATO', registro:{
-      ID:uid('m'), DATA:m.DATA, IDENTIFICACAO:m.IDENTIFICACAO, VALOR:m.VALOR,
+      ID:uid('m'), DATA:m.DATA, IDENTIFICACAO:tit(m.IDENTIFICACAO), VALOR:m.VALOR,
       TIPO: n(m.VALOR) < 0 ? 'D' : 'C', STATUS:'Pendente', PARCELA_ID:'', HASH:m.HASH,
       BANCO:banco, IMPORTADO_EM:quando, OBS:'', LOTE:loteId, ARQUIVO:IMP_NOME || 'Arquivo' }}));
     for (let i=0;i<lote.length;i+=300){
@@ -2175,7 +2211,7 @@ function formCR(id){
 async function gravarCR(id){
   if (!val('crDesc') || !n(val('crValor'))) return toast('Informe descrição e valor.','erro');
   const atual = (DB.CONTAS_RECEBER||[]).find(x => x.ID === id) || {};
-  await salvar('CONTAS_RECEBER', Object.assign({}, atual, {ID:id||'', DESCRICAO:val('crDesc'), CLIENTE:val('crCliente'),
+  await salvar('CONTAS_RECEBER', Object.assign({}, atual, {ID:id||'', DESCRICAO:tit(val('crDesc')), CLIENTE:tit(val('crCliente')),
     CATEGORIA:val('crCat'), VENCIMENTO:val('crVenc'), VALOR:rd(n(val('crValor'))),
     STATUS: atual.STATUS || 'Em aberto', DATA_RECEB: atual.DATA_RECEB || '', ORIGEM: atual.ORIGEM || 'Manual'}));
   fecharModal(); render();
@@ -2336,7 +2372,7 @@ function formCP(id){
     '<div class="grade">' + inp('cpDesc','Descrição', c.DESCRICAO, 'full')
     + '<div class="campo"><label for="cpFav">Favorecido</label><div style="display:flex;gap:6px">'
       + '<input id="cpFav" list="dlFav" autocomplete="off" value="'+esc(c.FAVORECIDO||'')+'" placeholder="digite para buscar" oninput="favEscolhido()" style="flex:1;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r)">'
-      + '<button class="btn sec" style="padding:8px 12px" title="Adicionar aos favorecidos" onclick="addFavorecidoRapido(\'cpFav\')">+</button></div>'
+      + '<button class="btn sec" style="padding:8px 12px" title="Adicionar aos favorecidos" onclick="addFavorecidoRapido(\'cpFav\',\'cpCat\')">+</button></div>'
       + '<datalist id="dlFav">'+optsFavorecidos()+'</datalist></div>'
     + sel('cpCat','Categoria (débito)', opcoesCategorias('D', c.CATEGORIA, '— selecione —'), c.CATEGORIA)
     + inp('cpVenc','Vencimento', c.VENCIMENTO || hoje(), '', 'date')
@@ -2402,22 +2438,24 @@ async function gravarCP(id){
   if (!val('cpDesc')) return toast('Informe a descrição.','erro');
   if (!recorrente && !n(val('cpValor'))) return toast('Informe o valor.','erro');
   const atual = (DB.CONTAS_PAGAR||[]).find(x => x.ID === id) || {};
-  const comum = { DESCRICAO:val('cpDesc'), FAVORECIDO:val('cpFav'), CATEGORIA:val('cpCat'), OBS:val('cpObs') };
+  const comum = { DESCRICAO:tit(val('cpDesc')), FAVORECIDO:tit(val('cpFav')), CATEGORIA:val('cpCat'), OBS:val('cpObs') };
 
+  const fav = garantirFavorecido(tit(val('cpFav')), val('cpCat'));
   if (recorrente){
     const lote = REC_TMP.map((r,i) => ({aba:'CONTAS_PAGAR', registro: Object.assign({}, comum, {
       ID:uid('cp'), VENCIMENTO:r.venc, VALOR: n(r.valor) ? rd(n(r.valor)) : '',
       STATUS:'Em aberto', DATA_PGTO:'', ORIGEM:'Recorrente', PARCELA_ID:'', ANEXO_URL:'' })}));
+    if (fav) lote.push(fav);
     fecharModal();
     try{ await salvarLoteRapido(lote); toast(lote.length + ' contas recorrentes lançadas e salvas.','ok'); }catch(e){}
     return;
   }
   fecharModal();
   try{
-    await salvarLoteRapido([{aba:'CONTAS_PAGAR', registro: Object.assign({}, atual, comum, {ID:id||uid('cp'),
+    await salvarLoteRapido((fav ? [fav] : []).concat([{aba:'CONTAS_PAGAR', registro: Object.assign({}, atual, comum, {ID:id||uid('cp'),
       VENCIMENTO:val('cpVenc'), VALOR:rd(n(val('cpValor'))),
       STATUS: atual.STATUS || 'Em aberto', DATA_PGTO: atual.DATA_PGTO || '',
-      ORIGEM: atual.ORIGEM || 'Manual', PARCELA_ID: atual.PARCELA_ID || '', ANEXO_URL: atual.ANEXO_URL || ''})}]);
+      ORIGEM: atual.ORIGEM || 'Manual', PARCELA_ID: atual.PARCELA_ID || '', ANEXO_URL: atual.ANEXO_URL || ''})}]));
     toast('Conta salva na nuvem.','ok');
   }catch(e){}
 }
