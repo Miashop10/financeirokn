@@ -1764,27 +1764,43 @@ function montaRateio(){
     + '<div class="grade">'
     + inp('ncEsc','Valor do escritório (R$)', nMoeda(total), '', 'text', 'oninput="sincronizaRateio(\'esc\')"')
     + inp('ncCli','Valor do cliente (R$)', nMoeda(0), '', 'text', 'oninput="sincronizaRateio(\'cli\')"')
+    + '<div class="check"><input type="checkbox" id="ncTarifaOn" onchange="sincronizaRateio()">'
+      + '<label for="ncTarifaOn">Deduzir tarifa bancária</label></div>'
+    + inp('ncTarifaV','Valor da tarifa (R$)', nMoeda(tarifaPadrao()), '', 'text', 'oninput="sincronizaRateio()"')
     + '</div>'
     + '<p class="mini" id="avisoRateio" style="margin-top:4px">Total do crédito: '+moeda(total)+'. Ao digitar um lado, o outro é ajustado.</p>';
   montaRepasse();
   sincronizaRateio('esc');
+}
+/* a tarifa sai da parte do cliente e entra na do escritório, como nas parcelas de acordo */
+function tarifaDoRateio(){
+  return val('ncTarifaOn') ? rd(n(val('ncTarifaV'))) : 0;
 }
 function sincronizaRateio(origem){
   const total = rd(n(val('ncValor')));
   const eEsc = document.getElementById('ncEsc'), eCli = document.getElementById('ncCli');
   if (!eEsc || !eCli) return;
   if (origem === 'esc') eCli.value = nMoeda(rd(total - n(eEsc.value)));
-  else eEsc.value = nMoeda(rd(total - n(eCli.value)));
+  else if (origem === 'cli') eEsc.value = nMoeda(rd(total - n(eCli.value)));
   const cli = rd(n(eCli.value)), esc = rd(n(eEsc.value));
+  const tar = tarifaDoRateio();
+  const escF = rd(esc + tar), cliF = rd(cli - tar);
+  const campoTar = document.getElementById('ncTarifaV');
+  if (campoTar) campoTar.disabled = !val('ncTarifaOn');
+
   const aviso = document.getElementById('avisoRateio');
-  if (aviso) aviso.innerHTML = 'Total do crédito: <b>'+moeda(total)+'</b> — escritório '+moeda(esc)
-    + ' (<b>'+pctSobre(esc, total)+'</b>) · cliente '+moeda(cli)+' (<b>'+pctSobre(cli, total)+'</b>)'
-    + (esc < 0 || cli < 0 ? ' <span class="neg">— um dos lados ficou negativo</span>' : '');
+  if (aviso) aviso.innerHTML = 'Total do crédito: <b>'+moeda(total)+'</b> — escritório <b>'+pctSobre(esc, total)+'</b> = '+moeda(esc)
+    + (tar ? ' + tarifa = <b>'+moeda(escF)+'</b>' : '')
+    + ' · cliente <b>'+pctSobre(cli, total)+'</b> = '+moeda(cli)
+    + (tar ? ' − tarifa = <b>'+moeda(cliF)+'</b>' : '')
+    + (tar ? '<br>Tarifa de '+moeda(tar)+' deduzida do cliente e revertida ao escritório.' : '')
+    + (escF < 0 || cliF < 0 ? ' <span class="neg">— um dos lados ficou negativo</span>' : '');
+
   const rep = document.getElementById('boxRepasse');
   if (rep){
-    rep.style.display = cli > 0 ? 'block' : 'none';
+    rep.style.display = cliF > 0 ? 'block' : 'none';
     const campoValor = document.getElementById('rpValor');
-    if (campoValor && document.activeElement !== campoValor) campoValor.value = nMoeda(cli);
+    if (campoValor && document.activeElement !== campoValor) campoValor.value = nMoeda(cliF);
   }
 }
 /* campos da conta a pagar do repasse, montados uma vez e só exibidos quando há valor do cliente */
@@ -1825,12 +1841,14 @@ async function gravarNovoNaConciliacao(movId){
       ORIGEM:'Lançado na conciliação', PARCELA_ID:'', ANEXO_URL:'', OBS:val('ncObs')}});
   } else {
     const rateia = catRateia(val('ncCat'));
-    const esc = rateia ? rd(n(val('ncEsc'))) : valor;
-    const cli = rateia ? rd(n(val('ncCli'))) : 0;
+    const tar = rateia ? tarifaDoRateio() : 0;
+    const escBruto = rateia ? rd(n(val('ncEsc'))) : valor;
+    const cliBruto = rateia ? rd(n(val('ncCli'))) : 0;
+    const esc = rd(escBruto + tar), cli = rd(cliBruto - tar);
     if (rateia){
-      if (esc < 0 || cli < 0) return toast('Os valores do escritório e do cliente não podem ser negativos.','erro');
-      if (Math.abs(rd(esc + cli) - valor) > 0.01)
-        return toast('A soma do escritório com o cliente ('+moeda(rd(esc+cli))+') tem que fechar com o valor do crédito ('+moeda(valor)+').','erro');
+      if (Math.abs(rd(escBruto + cliBruto) - valor) > 0.01)
+        return toast('A soma do escritório com o cliente ('+moeda(rd(escBruto+cliBruto))+') tem que fechar com o valor do crédito ('+moeda(valor)+').','erro');
+      if (esc < 0 || cli < 0) return toast('Com a tarifa, um dos lados ficou negativo. Revise os valores.','erro');
     }
     let cpId = '';
     if (cli > 0){
@@ -1844,12 +1862,15 @@ async function gravarNovoNaConciliacao(movId){
         FAVORECIDO:tit(val('rpFav')), CATEGORIA:val('rpCat') || 'Repasse a cliente', VENCIMENTO:val('rpVenc') || m.DATA,
         VALOR:vRep, STATUS:'Em aberto', DATA_PGTO:'', ORIGEM:'Repasse de recebimento', PARCELA_ID:'', ANEXO_URL:'',
         OBS: (val('rpObs') ? val('rpObs') + ' · ' : '')
-             + 'Crédito de ' + moeda(valor) + ' em ' + dataBR(m.DATA) + ' · escritório ' + moeda(esc) + ' · cliente ' + moeda(cli)}});
+             + 'Crédito de ' + moeda(valor) + ' em ' + dataBR(m.DATA)
+             + ' · escritório ' + moeda(esc) + ' (' + pctSobre(esc, valor) + ')'
+             + ' · cliente ' + moeda(cli) + ' (' + pctSobre(cli, valor) + ')'
+             + (tar ? ' · tarifa de ' + moeda(tar) + ' deduzida do cliente e revertida ao escritório' : '')}});
     }
     lote.push({aba:'CONTAS_RECEBER', registro:{ID:id, DESCRICAO:tit(val('ncDesc')), CLIENTE:tit(val('ncQuem')),
       CATEGORIA:val('ncCat'), VENCIMENTO:val('ncVenc'), VALOR:valor, STATUS:'Em aberto', DATA_RECEB:'',
       ORIGEM:'Lançado na conciliação', ANEXO_URL:'', OBS:val('ncObs'),
-      VALOR_ESCRITORIO:esc, VALOR_CLIENTE:cli, CP_ID:cpId}});
+      VALOR_ESCRITORIO:esc, VALOR_CLIENTE:cli, CP_ID:cpId, TARIFA:tar}});
   }
 
   fecharModal();
@@ -2289,7 +2310,7 @@ function telaRecebidas(){
   (DB.CONTAS_RECEBER||[]).filter(c => c.STATUS === 'Recebido').forEach(c =>
     L.push({id:c.ID, tipo:'avulso', pasta:'—', cliente:c.CLIENTE, proc:'', desc:c.DESCRICAO, data:c.DATA_RECEB,
             valor:n(c.VALOR), cli:n(c.VALOR_CLIENTE),
-            esc:n(c.VALOR_ESCRITORIO) || n(c.VALOR), tar:0, lanc:''}));
+            esc:n(c.VALOR_ESCRITORIO) || n(c.VALOR), tar:n(c.TARIFA), lanc:''}));
 
   L = L.filter(r => casa(r, ['pasta','cliente','proc','desc'], t))
        .filter(r => !mes || mesDe(r.data) === mes)
@@ -2310,9 +2331,9 @@ function telaRecebidas(){
     + (L.length ? L.map(r => '<tr><td>'+dataBR(r.data)+'</td>'
       + '<td>'+pastaCliente(r.pasta, r.cliente)+'</td><td>'+esc(r.desc)+'</td>'
       + '<td class="num">'+nMoeda(r.valor)+'</td>'
-      + '<td class="num">'+nMoeda(r.cli)+'<div class="mini">'+pctSobre(r.cli, r.valor)+'</div></td>'
+      + '<td class="num">'+nMoeda(r.cli)+'<div class="mini">'+pctSobre(rd(r.cli + r.tar), r.valor)+'</div></td>'
       + '<td class="num">'+(r.tar?nMoeda(r.tar):'—')+'</td>'
-      + '<td class="num pos">'+nMoeda(r.esc)+'<div class="mini">'+pctSobre(r.esc, r.valor)+'</div></td>'
+      + '<td class="num pos">'+nMoeda(r.esc)+'<div class="mini">'+pctSobre(rd(r.esc - r.tar), r.valor)+'</div></td>'
       + '<td style="text-align:right;white-space:nowrap">'
       + (r.tipo === 'parcela'
           ? '<button class="btn sm sec" onclick="verParcelas(\''+r.lanc+'\')">Ver pasta</button> '
@@ -2326,8 +2347,9 @@ function telaRecebidas(){
 /* edição de um recebimento avulso já conciliado: dados e divisão com o cliente */
 function formRecebida(id){
   const c = (DB.CONTAS_RECEBER||[]).find(x => x.ID === id); if (!c) return;
-  const total = n(c.VALOR);
-  const esc0 = n(c.VALOR_ESCRITORIO) || total, cli0 = n(c.VALOR_CLIENTE);
+  const total = n(c.VALOR), tar0 = n(c.TARIFA);
+  // os campos mostram o rateio antes da tarifa, do mesmo jeito que foi digitado
+  const esc0 = rd((n(c.VALOR_ESCRITORIO) || total) - tar0), cli0 = rd(n(c.VALOR_CLIENTE) + tar0);
   RECEBIDA_ID = id;
   modal('Editar recebimento — ' + moeda(total),
     '<p class="mini" style="margin-bottom:14px">Crédito de <b>'+moeda(total)+'</b> conciliado em '+dataBR(c.DATA_RECEB)
@@ -2339,6 +2361,9 @@ function formRecebida(id){
     + '<div class="secao-form">Divisão do valor</div>'
     + inp('reEsc','Valor do escritório (R$)', nMoeda(esc0), '', 'text', 'oninput="sincronizaRecebida(\'esc\')"')
     + inp('reCli','Valor do cliente (R$)', nMoeda(cli0), '', 'text', 'oninput="sincronizaRecebida(\'cli\')"')
+    + '<div class="check"><input type="checkbox" id="reTarifaOn"'+(tar0?' checked':'')+' onchange="sincronizaRecebida()">'
+      + '<label for="reTarifaOn">Deduzir tarifa bancária</label></div>'
+    + inp('reTarifaV','Valor da tarifa (R$)', nMoeda(tar0 || tarifaPadrao()), '', 'text', 'oninput="sincronizaRecebida()"')
     + '<p class="mini full" id="avisoRecebida" style="margin:-4px 0 2px"></p>'
     + '<div class="campo full"><label for="reObs">Observações</label><textarea id="reObs" rows="2">'+esc(c.OBS||'')+'</textarea></div>'
     + '</div>',
@@ -2352,21 +2377,30 @@ function sincronizaRecebida(origem, totalFixo){
   const eEsc = document.getElementById('reEsc'), eCli = document.getElementById('reCli');
   if (!eEsc || !eCli) return;
   if (origem === 'esc') eCli.value = nMoeda(rd(total - n(eEsc.value)));
-  else eEsc.value = nMoeda(rd(total - n(eCli.value)));
-  const esc2 = rd(n(eEsc.value)), cli2 = rd(n(eCli.value));
+  else if (origem === 'cli') eEsc.value = nMoeda(rd(total - n(eCli.value)));
+  const tar = val('reTarifaOn') ? rd(n(val('reTarifaV'))) : 0;
+  const campoTar = document.getElementById('reTarifaV');
+  if (campoTar) campoTar.disabled = !val('reTarifaOn');
+  const escB = rd(n(eEsc.value)), cliB = rd(n(eCli.value));
+  const esc2 = rd(escB + tar), cli2 = rd(cliB - tar);
   const aviso = document.getElementById('avisoRecebida');
-  if (aviso) aviso.innerHTML = 'Escritório '+moeda(esc2)+' (<b>'+pctSobre(esc2, total)+'</b>) · cliente '
-    + moeda(cli2)+' (<b>'+pctSobre(cli2, total)+'</b>)'
+  if (aviso) aviso.innerHTML = 'Escritório <b>'+pctSobre(escB, total)+'</b> = '+moeda(escB)
+    + (tar ? ' + tarifa = <b>'+moeda(esc2)+'</b>' : '')
+    + ' · cliente <b>'+pctSobre(cliB, total)+'</b> = '+moeda(cliB)
+    + (tar ? ' − tarifa = <b>'+moeda(cli2)+'</b>' : '')
+    + (tar ? '<br>Tarifa de '+moeda(tar)+' deduzida do cliente e revertida ao escritório.' : '')
     + (esc2 < 0 || cli2 < 0 ? ' <span class="neg">— um dos lados ficou negativo</span>' : '');
 }
 let RECEBIDA_ID = '';
 async function gravarRecebida(id, total){
   RECEBIDA_ID = id;
   const c = (DB.CONTAS_RECEBER||[]).find(x => x.ID === id); if (!c) return;
-  const esc2 = rd(n(val('reEsc'))), cli2 = rd(n(val('reCli')));
-  if (esc2 < 0 || cli2 < 0) return toast('Os valores não podem ser negativos.','erro');
-  if (Math.abs(rd(esc2 + cli2) - rd(total)) > 0.01)
+  const tar = val('reTarifaOn') ? rd(n(val('reTarifaV'))) : 0;
+  const escB = rd(n(val('reEsc'))), cliB = rd(n(val('reCli')));
+  if (Math.abs(rd(escB + cliB) - rd(total)) > 0.01)
     return toast('A soma tem que fechar com o valor recebido ('+moeda(total)+').','erro');
+  const esc2 = rd(escB + tar), cli2 = rd(cliB - tar);
+  if (esc2 < 0 || cli2 < 0) return toast('Com a tarifa, um dos lados ficou negativo. Revise os valores.','erro');
 
   const cp = (DB.CONTAS_PAGAR||[]).find(x => x.ID === c.CP_ID);
   if (cp && cp.STATUS === 'Pago' && rd(n(cp.VALOR)) !== cli2)
@@ -2389,7 +2423,7 @@ async function gravarRecebida(id, total){
   }
   lote.push({aba:'CONTAS_RECEBER', registro: Object.assign({}, c, {
     DESCRICAO:tit(val('reDesc')), CLIENTE:tit(val('reCliente')), CATEGORIA:val('reCat'),
-    VALOR_ESCRITORIO:esc2, VALOR_CLIENTE:cli2, CP_ID:cpId, OBS:val('reObs')})});
+    VALOR_ESCRITORIO:esc2, VALOR_CLIENTE:cli2, CP_ID:cpId, TARIFA:tar, OBS:val('reObs')})});
 
   fecharModal();
   try{
@@ -2669,12 +2703,13 @@ function telaPainel(){
   const noMes = d => !mes || mesDe(d) === mes;
 
   const recb = (DB.PARCELAS||[]).filter(p => p.STATUS === 'Recebida' && noMes(p.DATA_CREDITO));
-  const tarifas = recb.reduce((s,p) => s + n(p.TARIFA), 0);
+  const tarifas = recb.reduce((s,p) => s + n(p.TARIFA), 0)
+    + (DB.CONTAS_RECEBER||[]).filter(c => c.STATUS === 'Recebido' && noMes(c.DATA_RECEB)).reduce((s,c) => s + n(c.TARIFA), 0);
   const hon = recb.filter(p => p.TIPO !== 'Sucumbência').reduce((s,p) => s + n(p.VALOR_ESCRITORIO) - n(p.TARIFA), 0);
   const suc = recb.filter(p => p.TIPO === 'Sucumbência').reduce((s,p) => s + n(p.VALOR_ESCRITORIO), 0);
   // em recebimentos divididos, só a parte do escritório é receita; a do cliente é repasse
   const crRecebidas = (DB.CONTAS_RECEBER||[]).filter(c => c.STATUS === 'Recebido' && noMes(c.DATA_RECEB));
-  const outras = crRecebidas.reduce((s,c) => s + (n(c.VALOR_ESCRITORIO) || n(c.VALOR)), 0);
+  const outras = crRecebidas.reduce((s,c) => s + rd((n(c.VALOR_ESCRITORIO) || n(c.VALOR)) - n(c.TARIFA)), 0);
   const repasseAvulso = crRecebidas.reduce((s,c) => s + n(c.VALOR_CLIENTE), 0);
   const repasses = recb.reduce((s,p) => s + n(p.VALOR_CLIENTE), 0) + repasseAvulso;
   const bruta = hon + suc + tarifas + outras;
@@ -2771,11 +2806,16 @@ function detalheDRE(chave){
       total += v;
       return [dataBR(p.DATA_CREDITO), pastaCliente(l.PASTA, l.CLIENTE),
               esc(p.TIPO + (p.NUM>0 ? ' ' + p.NUM : '')), nMoeda(p.VALOR_CREDITADO||p.VALOR), nMoeda(v)]; });
+    if (tipo === 'tarifas'){
+      crRec.filter(c => n(c.TARIFA) > 0).forEach(c => { total += n(c.TARIFA);
+        linhas.push([dataBR(c.DATA_RECEB), '<b>'+esc(c.CLIENTE||'—')+'</b>', esc(c.DESCRICAO||'—'),
+                     nMoeda(c.VALOR), nMoeda(c.TARIFA)]); });
+    }
 
   } else if (tipo === 'outras'){
     titulo = 'Outras receitas';
     cols = ['Recebido em','Cliente','Descrição','Valor do crédito','Parte do escritório'];
-    linhas = crRec.map(c => { const v = n(c.VALOR_ESCRITORIO) || n(c.VALOR); total += v;
+    linhas = crRec.map(c => { const v = rd((n(c.VALOR_ESCRITORIO) || n(c.VALOR)) - n(c.TARIFA)); total += v;
       return [dataBR(c.DATA_RECEB), esc(c.CLIENTE||'—'), esc(c.DESCRICAO||'—'), nMoeda(c.VALOR), nMoeda(v)]; });
 
   } else if (tipo === 'repasses'){
