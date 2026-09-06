@@ -101,6 +101,10 @@ th{text-align:left;font-weight:600;font-size:11px;letter-spacing:.04em;color:var
 td{padding:8px 10px;border-bottom:1px solid var(--line2);vertical-align:top}
 tbody tr:hover{background:var(--surface2)}
 tr.grifo{background:var(--brass-l)}
+.pill{display:inline-flex;align-items:center;gap:7px;background:var(--surface2);border:1px solid var(--line);border-radius:20px;padding:4px 6px 4px 12px;font-size:12.5px}
+.pill.off{opacity:.55}
+.pill button{background:none;border:0;color:var(--ink3);width:22px;height:22px;border-radius:50%;font-size:12px;line-height:1}
+.pill button:hover{background:var(--line2);color:var(--ink)}
 .seg{display:inline-flex;flex-wrap:wrap;gap:0;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:var(--surface);margin-bottom:14px}
 .seg button{background:none;border:0;border-right:1px solid var(--line);padding:8px 14px;font-size:13px;color:var(--ink2);display:flex;align-items:center;gap:7px}
 .seg button:last-child{border-right:0}
@@ -494,11 +498,11 @@ let CFGABA = 'filiais';
 function abrirConfig(aba){
   CFGABA = aba || CFGABA;
   const abas = [['contas','Contas bancárias'],['favorecidos','Favorecidos'],['filiais','Filiais'],['pracas','Praças'],['subclasses','Categorias'],['usuarios','Usuários'],
-                ['comissionados','Comissionados'],['regras','Regras de comissão'],['geral','Geral']];
+                ['regras','Regras de comissão'],['geral','Geral']];
   const menu = '<div class="subtabs">' + abas.map(([k,t]) =>
     '<button class="'+(CFGABA===k?'on':'')+'" onclick="abrirConfig(\''+k+'\')">'+t+'</button>').join('') + '</div>';
   const corpo = { contas:cfgContas, favorecidos:cfgFavorecidos, filiais:cfgFiliais, pracas:cfgPracas, usuarios:cfgUsuarios, subclasses:cfgSubclasses,
-                  comissionados:cfgComissionados, regras:cfgRegras, geral:cfgGeral }[CFGABA]();
+                  comissionados:cfgRegras, regras:cfgRegras, geral:cfgGeral }[CFGABA]();
   modal('Configurações', menu + corpo, '<button class="btn sec" onclick="fecharModal()">Fechar</button>', 'larga');
 }
 function tabelaSimples(cols, linhas){
@@ -771,17 +775,17 @@ async function gravarPraca(id){
   abrirConfig('pracas'); render();
 }
 
-/* Comissionados */
-function cfgComissionados(){
+/* Comissionados — cadastrados de dentro das regras de comissão */
+function listaComissionados(){
   const L = (DB.COMISSIONADOS||[]);
-  const linhas = L.length ? L.map(c =>
-    '<tr><td><b>'+esc(c.NOME)+'</b></td><td class="num">'+nMoeda(c.PCT_PADRAO)+'%</td>'
-    + '<td><span class="tag '+(c.ATIVO==='NAO'?'t-neutro':'t-ok')+'">'+(c.ATIVO==='NAO'?'Inativo':'Ativo')+'</span></td>'
-    + '<td style="text-align:right;white-space:nowrap"><button class="btn sm sec" onclick="formComissionado(\''+c.ID+'\')">Editar</button> '
-    + '<button class="btn sm per" onclick="apagarReg(\'COMISSIONADOS\',\''+c.ID+'\',\''+esc(c.NOME)+'\',\'comissionados\')">Excluir</button></td></tr>').join('')
-    : '<tr><td colspan="4" class="vazio">Nenhum comissionado. Cadastre quem recebe comissão sobre o valor do escritório.</td></tr>';
-  return '<div style="display:flex;margin-bottom:12px"><button class="btn" onclick="formComissionado()">Novo comissionado</button></div>'
-    + tabelaSimples([{t:'Nome'},{t:'% padrão',num:1},{t:'Situação'},{t:''}], linhas);
+  if (!L.length) return '<p class="mini" style="margin-bottom:12px">Nenhum comissionado ainda. '
+    + 'Cadastre quem recebe comissão sobre a parte do escritório.</p>';
+  return '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">'
+    + L.map(c => '<span class="pill'+(c.ATIVO==='NAO'?' off':'')+'"><b>'+esc(c.NOME)+'</b> '
+      + nMoeda(c.PCT_PADRAO)+'% padrão'
+      + '<button title="Editar" onclick="formComissionado(\''+c.ID+'\')">✎</button>'
+      + '<button title="Excluir" onclick="apagarReg(\'COMISSIONADOS\',\''+c.ID+'\',\''+esc(c.NOME)+'\',\'regras\')">✕</button></span>').join('')
+    + '</div>';
 }
 function formComissionado(id){
   const c = (DB.COMISSIONADOS||[]).find(x => x.ID === id) || {};
@@ -789,35 +793,120 @@ function formComissionado(id){
     '<div class="grade">' + inp('cmNome','Nome', c.NOME, 'full')
     + inp('cmPct','% padrão da comissão', c.PCT_PADRAO || '5', '', 'number')
     + '<div class="campo"><label>Situação</label><select id="cmAtivo"><option value="SIM">Ativo</option><option value="NAO"'+(c.ATIVO==='NAO'?' selected':'')+'>Inativo</option></select></div></div>'
-    + '<p class="mini" style="margin-top:10px">O % padrão é usado quando não houver regra específica por subclasse.</p>',
-    '<button class="btn sec" onclick="abrirConfig(\'comissionados\')">Cancelar</button><button class="btn" onclick="gravarComissionado(\''+(id||'')+'\')">Salvar comissionado</button>', 'estreita');
+    + '<p class="mini" style="margin-top:10px">O % padrão é apenas a sugestão preenchida ao criar uma regra. '
+    + 'Quem define a comissão é a regra por categoria.</p>',
+    '<button class="btn sec" onclick="abrirConfig(\'regras\')">Cancelar</button><button class="btn" onclick="gravarComissionado(\''+(id||'')+'\')">Salvar comissionado</button>', 'estreita');
 }
 async function gravarComissionado(id){
   if (!val('cmNome')) return toast('Informe o nome.','erro');
   await salvar('COMISSIONADOS', {ID:id||'', NOME:val('cmNome'), PCT_PADRAO:val('cmPct')||'0', ATIVO:val('cmAtivo')});
-  abrirConfig('comissionados');
+  abrirConfig('regras');
 }
 
-/* Regras de comissão por subclasse */
+/* Regras de comissão — inclui o cadastro dos comissionados */
 function cfgRegras(){
-  const L = (DB.REGRAS_COMISSAO||[]);
+  const ativos = (DB.COMISSIONADOS||[]).filter(c => c.ATIVO !== 'NAO');
+  const L = (DB.REGRAS_COMISSAO||[]).slice()
+    .sort((a,b) => String(a.SUBCLASSE).localeCompare(String(b.SUBCLASSE),'pt-BR')
+                || String(nomeComissionado(a.COMISSIONADO_ID)).localeCompare(String(nomeComissionado(b.COMISSIONADO_ID)),'pt-BR'));
   const linhas = L.length ? L.map(r =>
-    '<tr><td>'+esc(r.SUBCLASSE)+'</td><td><b>'+esc(nomeComissionado(r.COMISSIONADO_ID))+'</b></td>'
+    '<tr><td>'+esc(r.SUBCLASSE)+'</td>'
+    + '<td>'+(pracasDaRegra(r).length
+        ? pracasDaRegra(r).map(p => '<span class="tag t-neutro" style="margin:1px 2px 1px 0">'+esc(p)+'</span>').join('')
+        : '<span class="tag t-ok">Todas</span>')+'</td>'
+    + '<td><b>'+esc(nomeComissionado(r.COMISSIONADO_ID))+'</b></td>'
+    + '<td>'+(n(r.PCT_BASE) > 0
+        ? '<b>'+nMoeda(r.PCT_BASE)+'%</b> do crédito'
+        : '<span class="mini">o que ficou para o escritório</span>')+'</td>'
     + '<td class="num">'+nMoeda(r.PCT)+'%</td>'
-    + '<td style="text-align:right"><button class="btn sm per" onclick="apagarReg(\'REGRAS_COMISSAO\',\''+r.ID+'\',\'esta regra\',\'regras\')">Excluir</button></td></tr>').join('')
-    : '<tr><td colspan="4" class="vazio">Sem regras. Sem regra cadastrada para a categoria, o lançamento não gera comissão automática.</td></tr>';
+    + '<td style="text-align:right;white-space:nowrap">'
+    + '<button class="btn sm sec" onclick="formRegra(\''+r.ID+'\')">Editar</button> '
+    + '<button class="btn sm per" onclick="apagarReg(\'REGRAS_COMISSAO\',\''+r.ID+'\',\'esta regra\',\'regras\')">Excluir</button></td></tr>').join('')
+    : '<tr><td colspan="6" class="vazio">Sem regras. Sem regra cadastrada para a categoria, o lançamento não gera comissão automática.</td></tr>';
+
   const subs = categorias('C').map(nome => '<option>'+esc(nome)+'</option>').join('');
-  const coms = (DB.COMISSIONADOS||[]).filter(c => c.ATIVO !== 'NAO').map(c => '<option value="'+c.ID+'">'+esc(c.NOME)+'</option>').join('');
-  return '<div class="grade" style="margin-bottom:12px;align-items:end">'
-    + '<div class="campo"><label>Categoria (crédito)</label><select id="rgSub">'+subs+'</select></div>'
-    + '<div class="campo"><label>Comissionado</label><select id="rgCom">'+coms+'</select></div>'
-    + '<div class="campo"><label>% sobre o valor do escritório</label><input id="rgPct" type="number" step="0.01" value="5"></div>'
-    + '<div><button class="btn" onclick="addRegra()">Adicionar regra</button></div></div>'
-    + tabelaSimples([{t:'Categoria'},{t:'Comissionado'},{t:'%',num:1},{t:''}], linhas);
+
+  return '<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">'
+    + '<button class="btn sec" onclick="formComissionado()">+ Novo comissionado</button></div>'
+    + listaComissionados()
+    + (ativos.length && subs
+      ? '<div style="border-top:1px solid var(--line2);padding-top:14px;margin-bottom:14px">'
+        + '<button class="btn" onclick="formRegra()">+ Nova regra de comissão</button></div>'
+      : '<p class="mini" style="margin:14px 0">'
+        + (!ativos.length ? 'Cadastre um comissionado para criar as regras. ' : '')
+        + (!subs ? 'Cadastre ao menos uma categoria de crédito na aba Categorias.' : '') + '</p>')
+    + tabelaSimples([{t:'Categoria'},{t:'Praças'},{t:'Comissionado'},{t:'Base'},{t:'%',num:1},{t:''}], linhas);
 }
-async function addRegra(){
-  if (!val('rgSub') || !val('rgCom')) return toast('Cadastre categorias de crédito e comissionados primeiro.','erro');
-  await salvar('REGRAS_COMISSAO', {ID:'', SUBCLASSE:val('rgSub'), COMISSIONADO_ID:val('rgCom'), PCT:val('rgPct')||'0'});
+/* praças de uma regra; lista vazia significa todas */
+function pracasDaRegra(r){
+  return String((r && r.PRACAS) || '').split('|').map(s => s.trim()).filter(Boolean);
+}
+function regraCobrePraca(r, praca){
+  const L = pracasDaRegra(r);
+  return !L.length || L.indexOf(String(praca||'').trim()) > -1;
+}
+let PRACAS_REGRA = [];
+function formRegra(id){
+  const r = (DB.REGRAS_COMISSAO||[]).find(x => x.ID === id) || {};
+  const coms = (DB.COMISSIONADOS||[]).filter(c => c.ATIVO !== 'NAO' || c.ID === r.COMISSIONADO_ID)
+    .map(c => [c.ID, c.NOME]);
+  const padrao = (DB.COMISSIONADOS||[]).find(c => c.ID === (r.COMISSIONADO_ID || (coms[0]||[])[0]));
+  PRACAS_REGRA = pracasDaRegra(r);
+  modal(id ? 'Editar regra de comissão' : 'Nova regra de comissão',
+    '<div class="grade">'
+    + sel('erSub','Categoria (crédito)', opcoesCategorias('C', r.SUBCLASSE), r.SUBCLASSE)
+    + sel('erCom','Comissionado', coms, r.COMISSIONADO_ID)
+    + inp('erPct','% da comissão', id ? n(r.PCT) : (n(padrao && padrao.PCT_PADRAO) || 5), '', 'number', 'step="0.01"')
+    + inp('erBase','% do escritório usado como base', n(r.PCT_BASE) > 0 ? n(r.PCT_BASE) : '', '', 'number', 'step="0.01" placeholder="em branco"')
+    + '<p class="mini full" style="margin:-4px 0 2px">Em branco, a comissão incide sobre o que realmente ficou para o escritório no processo. '
+    + 'Preenchido, incide sempre sobre esse percentual do crédito — ex.: 30%, mesmo num processo em que o escritório ficou com 33%.</p>'
+    + '<div class="secao-form">Praças em que esta regra vale</div>'
+    + '<div class="full" id="boxPracasRegra"></div>'
+    + '</div>',
+    '<button class="btn sec" onclick="abrirConfig(\'regras\')">Cancelar</button>'
+    + '<button class="btn" onclick="gravarRegra(\''+(id||'')+'\')">Salvar regra</button>');
+  pintarPracasRegra();
+}
+function pintarPracasRegra(){
+  const box = document.getElementById('boxPracasRegra'); if (!box) return;
+  const L = (DB.PRACAS||[]).filter(p => p.ATIVO !== 'NAO').map(p => p.NOME);
+  PRACAS_REGRA.forEach(p => { if (L.indexOf(p) < 0) L.push(p); });
+  if (!L.length){ box.innerHTML = '<p class="mini">Nenhuma praça cadastrada — a regra valerá para todas.</p>'; return; }
+  const todas = PRACAS_REGRA.length === 0;
+  box.innerHTML = '<div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">'
+    + '<button class="btn sm '+(todas?'':'sec')+'" onclick="marcarPracas(\'todas\')">Todas as praças</button>'
+    + '<button class="btn sm sec" onclick="marcarPracas(\'nenhuma\')">Limpar seleção</button></div>'
+    + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:4px">'
+    + L.sort((a,b) => String(a).localeCompare(String(b),'pt-BR')).map(p =>
+      '<label style="display:flex;align-items:center;gap:7px;font-size:13px;padding:3px 0">'
+      + '<input type="checkbox" style="width:16px;height:16px;accent-color:var(--brand)" '
+      + (PRACAS_REGRA.indexOf(p) > -1 ? 'checked ' : '')
+      + 'onchange="alternaPraca(this.checked,\''+esc(p).replace(/'/g,"\\'")+'\')">' + esc(p) + '</label>').join('')
+    + '</div>'
+    + '<p class="mini" style="margin-top:8px">'
+    + (todas ? 'Nenhuma marcada: a regra vale para <b>todas</b> as praças.'
+             : '<b>'+PRACAS_REGRA.length+'</b> praça(s) marcada(s): a comissão só é gerada nessas.') + '</p>';
+}
+function alternaPraca(marcado, nome){
+  const i = PRACAS_REGRA.indexOf(nome);
+  if (marcado && i < 0) PRACAS_REGRA.push(nome);
+  if (!marcado && i > -1) PRACAS_REGRA.splice(i,1);
+  pintarPracasRegra();
+}
+function marcarPracas(modo){
+  PRACAS_REGRA = modo === 'todas' ? [] : [];
+  pintarPracasRegra();
+}
+async function gravarRegra(id){
+  if (!val('erSub') || !val('erCom')) return toast('Escolha a categoria e o comissionado.','erro');
+  const repetida = (DB.REGRAS_COMISSAO||[]).some(r => r.ID !== id
+    && r.SUBCLASSE === val('erSub') && r.COMISSIONADO_ID === val('erCom')
+    && String(r.PRACAS||'') === PRACAS_REGRA.join('|'));
+  if (repetida) return toast('Já existe uma regra igual para esse comissionado.','erro');
+  const r = (DB.REGRAS_COMISSAO||[]).find(x => x.ID === id) || {};
+  await salvar('REGRAS_COMISSAO', Object.assign({}, r, {ID:id||'', SUBCLASSE:val('erSub'),
+    COMISSIONADO_ID:val('erCom'), PCT:val('erPct')||'0',
+    PRACAS:PRACAS_REGRA.join('|'), PCT_BASE:val('erBase')||''}));
   abrirConfig('regras');
 }
 
@@ -1417,12 +1506,17 @@ async function conciliarParcela(m, p){
       OBS:'Liberado — crédito de '+moeda(valor)+' conciliado em '+dataBR(m.DATA)
           +' · '+memoriaRateio(valor, l, tarifa, suc) })});
   }
-  (DB.REGRAS_COMISSAO||[]).filter(r => r.SUBCLASSE && r.SUBCLASSE === l.SUBCLASSE).forEach(r => {
-    const v = rd(baseCom * n(r.PCT) / 100);
-    if (v <= 0) return;
-    lote.push({aba:'COMISSOES', registro:{ ID:uid('co'), PARCELA_ID:p.ID, LANC_ID:l.ID, CLIENTE:l.CLIENTE||'',
-      COMISSIONADO_ID:r.COMISSIONADO_ID, BASE:baseCom, PCT:n(r.PCT), VALOR:v, STATUS:'A pagar', DATA:m.DATA, CP_ID:'' }});
-  });
+  (DB.REGRAS_COMISSAO||[])
+    .filter(r => r.SUBCLASSE && r.SUBCLASSE === l.SUBCLASSE)
+    .filter(r => regraCobrePraca(r, l.PRACA))
+    .forEach(r => {
+      // base própria: % fixo do crédito, independente do rateio do processo
+      const base = n(r.PCT_BASE) > 0 ? rd(valor * n(r.PCT_BASE) / 100) : baseCom;
+      const v = rd(base * n(r.PCT) / 100);
+      if (v <= 0) return;
+      lote.push({aba:'COMISSOES', registro:{ ID:uid('co'), PARCELA_ID:p.ID, LANC_ID:l.ID, CLIENTE:l.CLIENTE||'',
+        COMISSIONADO_ID:r.COMISSIONADO_ID, BASE:base, PCT:n(r.PCT), VALOR:v, STATUS:'A pagar', DATA:m.DATA, CP_ID:'' }});
+    });
 
   try{
     await salvarLoteRapido(lote);
@@ -2112,7 +2206,7 @@ function telaComissoes(){
     if (c.STATUS !== 'Paga') porCom[c.COMISSIONADO_ID].ab += n(c.VALOR); });
 
   const cabecalho = '<tr><th>Crédito</th><th>Pasta / cliente</th><th>Categoria</th>'
-    + '<th class="num">Caiu na conta</th><th class="num">Para o escritório</th><th class="num">Base da comissão</th>'
+    + '<th class="num">Caiu na conta</th><th class="num">Para o escritório</th><th class="num">Base padrão</th>'
     + coms.map(c => '<th class="num">'+esc(c.NOME)+'</th>').join('') + '</tr>';
 
   const linhas = recs.length ? recs.map(r =>
@@ -2120,7 +2214,7 @@ function telaComissoes(){
     + '<td>'+esc(r.sub)+'</td><td class="num">'+nMoeda(r.caiu)+'</td><td class="num">'+nMoeda(r.esc)+'</td>'
     + '<td class="num">'+nMoeda(r.base)+'</td>'
     + coms.map(c => { const it = r.itens.find(x => x.COMISSIONADO_ID === c.ID);
-        return '<td class="num">' + (it ? nMoeda(it.VALOR) + '<div class="mini">' + nMoeda(it.PCT) + '%'
+        return '<td class="num">' + (it ? nMoeda(it.VALOR) + '<div class="mini">' + nMoeda(it.PCT) + '% de ' + moeda(it.BASE)
           + (it.STATUS === 'Paga' ? ' · paga' : '') + '</div>' : '<span class="mini">—</span>') + '</td>'; }).join('')
     + '</tr>').join('')
     : '<tr><td colspan="'+(6+coms.length)+'">'+vazio('Sem comissões no período','As comissões são geradas na conciliação, conforme as regras por categoria.')+'</td></tr>';
@@ -2134,8 +2228,7 @@ function telaComissoes(){
 
   const aPagar = todas.filter(c => c.STATUS !== 'Paga');
   return cabec('Comissões', 'Base de cálculo: a parte do escritório sem a tarifa bancária.',
-      '<button class="btn sec" onclick="abrirConfig(\'comissionados\')">Comissionados</button>'
-    + '<button class="btn sec" onclick="abrirConfig(\'regras\')">Regras por categoria</button>'
+      '<button class="btn sec" onclick="abrirConfig(\'regras\')">Comissionados e regras</button>'
     + (aPagar.length ? '<button class="btn" onclick="gerarCPComissoes()">Enviar '+aPagar.length+' para contas a pagar</button>' : ''))
     + '<div class="kpis">'
     + coms.slice(0,4).map(c => kpi(c.NOME, moeda((porCom[c.ID]||{}).t || 0), moeda((porCom[c.ID]||{}).ab || 0) + ' em aberto', 'b')).join('')
@@ -2143,7 +2236,7 @@ function telaComissoes(){
     + '<div class="filtros">' + campoBusca('Cliente, pasta, subclasse…') + selMes('fMesC', mes) + '</div>'
     + (coms.length
       ? '<div class="card"><div class="tw"><table><thead>'+cabecalho+'</thead><tbody>'+linhas+'</tbody>'+rodape+'</table></div></div>'
-      : '<div class="card">'+vazio('Nenhum comissionado cadastrado','Cadastre os comissionados e as regras por subclasse na engrenagem.')+'</div>');
+      : '<div class="card">'+vazio('Nenhum comissionado cadastrado','Cadastre os comissionados e as regras por categoria na engrenagem, em Regras de comissão.')+'</div>');
 }
 async function gerarCPComissoes(){
   const pend = (DB.COMISSOES||[]).filter(c => c.STATUS !== 'Paga' && !c.CP_ID);
