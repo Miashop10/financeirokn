@@ -689,6 +689,8 @@ async function gravarUsuario(id){
 
 /* Categorias (crédito e débito) */
 const ehDebitoCat = c => String((c && c.TIPO) || '').trim().toLowerCase().charAt(0) === 'd';
+/* categoria de crédito que divide o valor com o cliente */
+const catRateia = nome => (DB.SUBCLASSES||[]).some(c => c.NOME === nome && String(c.RATEIO||'').toUpperCase() === 'SIM');
 function categorias(tipo){
   return (DB.SUBCLASSES||[])
     .filter(c => tipo === 'D' ? ehDebitoCat(c) : !ehDebitoCat(c))
@@ -706,7 +708,8 @@ function cfgSubclasses(){
     (ehDebitoCat(a) - ehDebitoCat(b)) || String(a.NOME).localeCompare(String(b.NOME),'pt-BR'));
   const linhas = L.length ? L.map(s =>
     '<tr><td><b>'+esc(s.NOME)+'</b></td>'
-    + '<td><span class="tag '+(ehDebitoCat(s)?'t-ni':'t-ok')+'">'+(ehDebitoCat(s)?'Débito':'Crédito')+'</span></td>'
+    + '<td><span class="tag '+(ehDebitoCat(s)?'t-ni':'t-ok')+'">'+(ehDebitoCat(s)?'Débito':'Crédito')+'</span>'
+    + (String(s.RATEIO||'').toUpperCase() === 'SIM' ? ' <span class="tag t-pend">divide com o cliente</span>' : '')+'</td>'
     + '<td style="text-align:right;white-space:nowrap">'
     + '<button class="btn sm sec" onclick="formSubclasse(\''+s.ID+'\')">Editar</button> '
     + '<button class="btn sm per" onclick="apagarReg(\'SUBCLASSES\',\''+s.ID+'\',\''+esc(s.NOME)+'\',\'subclasses\')">Excluir</button></td></tr>').join('')
@@ -716,27 +719,30 @@ function cfgSubclasses(){
     + '<div class="campo" style="margin:0"><label>Tipo</label><select id="novaSubTipo"><option value="Crédito">Crédito</option><option value="Débito">Débito</option></select></div>'
     + '<button class="btn" onclick="addSubclasse()">Adicionar</button></div>'
     + '<p class="mini" style="margin-bottom:12px">As de <b>crédito</b> aparecem nos lançamentos, nos recebimentos e nas regras de comissão. '
-    + 'As de <b>débito</b> aparecem ao lançar uma conta a pagar.</p>'
+    + 'As de <b>débito</b> aparecem ao lançar uma conta a pagar. Marque em Editar as que <b>dividem com o cliente</b>.</p>'
     + tabelaSimples([{t:'Categoria'},{t:'Tipo'},{t:''}], linhas);
 }
 async function addSubclasse(){
   const nome = val('novaSub'); if (!nome) return toast('Informe o nome da categoria.','erro');
   if ((DB.SUBCLASSES||[]).some(c => c.NOME.toLowerCase() === nome.toLowerCase()))
     return toast('Já existe uma categoria com esse nome.','erro');
-  await salvar('SUBCLASSES', {ID:'', NOME:nome, TIPO:val('novaSubTipo')}); abrirConfig('subclasses');
+  await salvar('SUBCLASSES', {ID:'', NOME:nome, TIPO:val('novaSubTipo'), RATEIO:''}); abrirConfig('subclasses');
 }
 function formSubclasse(id){
   const s = (DB.SUBCLASSES||[]).find(x => x.ID === id) || {};
   modal('Editar categoria', '<div class="grade">' + inp('sbNome','Nome da categoria', s.NOME, 'full')
     + '<div class="campo"><label for="sbTipo">Tipo</label><select id="sbTipo">'
       + '<option value="Crédito"'+(ehDebitoCat(s)?'':' selected')+'>Crédito — entradas</option>'
-      + '<option value="Débito"'+(ehDebitoCat(s)?' selected':'')+'>Débito — saídas</option></select></div></div>'
+      + '<option value="Débito"'+(ehDebitoCat(s)?' selected':'')+'>Débito — saídas</option></select></div>'
+    + '<div class="check full"><input type="checkbox" id="sbRateio"'+(String(s.RATEIO||'').toUpperCase()==='SIM'?' checked':'')+'>'
+    + '<label for="sbRateio">Divide com o cliente — ao conciliar um crédito desta categoria, o sistema pede o valor do escritório e o do cliente</label></div></div>'
     + '<p class="mini" style="margin-top:8px">Ao renomear, os lançamentos, as contas e as regras de comissão que usam esta categoria são atualizados junto.</p>',
     '<button class="btn sec" onclick="abrirConfig(\'subclasses\')">Cancelar</button><button class="btn" onclick="gravarSubclasse(\''+id+'\',\''+esc(s.NOME)+'\')">Salvar</button>', 'estreita');
 }
 async function gravarSubclasse(id, antigo){
   const nome = val('sbNome'); if (!nome) return toast('Informe o nome da categoria.','erro');
-  const lote = [{aba:'SUBCLASSES', registro:{ID:id, NOME:nome, TIPO:val('sbTipo')}}];
+  const lote = [{aba:'SUBCLASSES', registro:{ID:id, NOME:nome, TIPO:val('sbTipo'),
+    RATEIO: (val('sbTipo').charAt(0).toLowerCase() !== 'd' && val('sbRateio')) ? 'SIM' : ''}}];
   (DB.REGRAS_COMISSAO||[]).filter(r => r.SUBCLASSE === antigo).forEach(r =>
     lote.push({aba:'REGRAS_COMISSAO', registro: Object.assign({}, r, {SUBCLASSE:nome})}));
   (DB.LANCAMENTOS||[]).filter(l => l.SUBCLASSE === antigo).forEach(l =>
@@ -818,7 +824,8 @@ function cfgRegras(){
     + '<td>'+(n(r.PCT_BASE) > 0
         ? '<b>'+nMoeda(r.PCT_BASE)+'%</b> do crédito'
         : '<span class="mini">o que ficou para o escritório</span>')+'</td>'
-    + '<td class="num">'+nMoeda(r.PCT)+'%</td>'
+    + '<td class="num">'+nMoeda(r.PCT)+'%'
+    + (n(r.PCT_EXEZ) > 0 ? '<div class="mini">'+nMoeda(r.PCT_EXEZ)+'% com EXEZ</div>' : '')+'</td>'
     + '<td style="text-align:right;white-space:nowrap">'
     + '<button class="btn sm sec" onclick="formRegra(\''+r.ID+'\')">Editar</button> '
     + '<button class="btn sm per" onclick="apagarReg(\'REGRAS_COMISSAO\',\''+r.ID+'\',\'esta regra\',\'regras\')">Excluir</button></td></tr>').join('')
@@ -841,6 +848,11 @@ function cfgRegras(){
 function pracasDaRegra(r){
   return String((r && r.PRACAS) || '').split('|').map(s => s.trim()).filter(Boolean);
 }
+/* percentual da regra: usa o próprio da EXEZ quando o lançamento foi calculado por ela */
+function pctDaRegra(r, usouExez){
+  const alt = n(r && r.PCT_EXEZ);
+  return (usouExez && alt > 0) ? alt : n(r && r.PCT);
+}
 function regraCobrePraca(r, praca){
   const L = pracasDaRegra(r);
   return !L.length || L.indexOf(String(praca||'').trim()) > -1;
@@ -857,6 +869,8 @@ function formRegra(id){
     + sel('erSub','Categoria (crédito)', opcoesCategorias('C', r.SUBCLASSE), r.SUBCLASSE)
     + sel('erCom','Comissionado', coms, r.COMISSIONADO_ID)
     + inp('erPct','% da comissão', id ? n(r.PCT) : (n(padrao && padrao.PCT_PADRAO) || 5), '', 'number', 'step="0.01"')
+    + inp('erPctExez','% da comissão quando usar a EXEZ', n(r.PCT_EXEZ) > 0 ? n(r.PCT_EXEZ) : '', '', 'number', 'step="0.01" placeholder="mesmo %"')
+    + '<p class="mini full" style="margin:-4px 0 2px">Em branco, vale o mesmo percentual nos dois casos. Preenchido, o sistema usa este quando o lançamento estiver marcado como calculado pela EXEZ — ex.: 33% normal e 31% com EXEZ.</p>'
     + inp('erBase','% do escritório usado como base', n(r.PCT_BASE) > 0 ? n(r.PCT_BASE) : '', '', 'number', 'step="0.01" placeholder="em branco"')
     + '<p class="mini full" style="margin:-4px 0 2px">Em branco, a comissão incide sobre o que realmente ficou para o escritório no processo. '
     + 'Preenchido, incide sempre sobre esse percentual do crédito — ex.: 30%, mesmo num processo em que o escritório ficou com 33%.</p>'
@@ -905,7 +919,7 @@ async function gravarRegra(id){
   if (repetida) return toast('Já existe uma regra igual para esse comissionado.','erro');
   const r = (DB.REGRAS_COMISSAO||[]).find(x => x.ID === id) || {};
   await salvar('REGRAS_COMISSAO', Object.assign({}, r, {ID:id||'', SUBCLASSE:val('erSub'),
-    COMISSIONADO_ID:val('erCom'), PCT:val('erPct')||'0',
+    COMISSIONADO_ID:val('erCom'), PCT:val('erPct')||'0', PCT_EXEZ:val('erPctExez')||'',
     PRACAS:PRACAS_REGRA.join('|'), PCT_BASE:val('erBase')||''}));
   abrirConfig('regras');
 }
@@ -1512,10 +1526,11 @@ async function conciliarParcela(m, p){
     .forEach(r => {
       // base própria: % fixo do crédito, independente do rateio do processo
       const base = n(r.PCT_BASE) > 0 ? rd(valor * n(r.PCT_BASE) / 100) : baseCom;
-      const v = rd(base * n(r.PCT) / 100);
+      const pctAplicado = pctDaRegra(r, l.EXEZ === 'SIM');
+      const v = rd(base * pctAplicado / 100);
       if (v <= 0) return;
       lote.push({aba:'COMISSOES', registro:{ ID:uid('co'), PARCELA_ID:p.ID, LANC_ID:l.ID, CLIENTE:l.CLIENTE||'',
-        COMISSIONADO_ID:r.COMISSIONADO_ID, BASE:base, PCT:n(r.PCT), VALOR:v, STATUS:'A pagar', DATA:m.DATA, CP_ID:'' }});
+        COMISSIONADO_ID:r.COMISSIONADO_ID, BASE:base, PCT:pctAplicado, VALOR:v, STATUS:'A pagar', DATA:m.DATA, CP_ID:'' }});
     });
 
   try{
@@ -1630,7 +1645,8 @@ function escolherManual(movId){
     'estreita');
 }
 /* Lança uma conta a pagar (débito) ou um recebimento (crédito) direto na conciliação
-   e já concilia o movimento com ele. */
+   e já concilia o movimento com ele. Em categorias que dividem com o cliente,
+   pede o rateio e monta o repasse em contas a pagar. */
 function formNovoNaConciliacao(movId){
   const m = (DB.EXTRATO||[]).find(x => x.ID === movId); if (!m) return;
   const deb = ehDebito(m);
@@ -1644,16 +1660,73 @@ function formNovoNaConciliacao(movId){
           + '<input id="ncQuem" list="dlFav" autocomplete="off" placeholder="digite para buscar" style="flex:1;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r)">'
           + '<button class="btn sec" style="padding:8px 12px" title="Adicionar aos favorecidos" onclick="addFavorecidoRapido(\'ncQuem\')">+</button></div>'
           + '<datalist id="dlFav">'+optsFavorecidos()+'</datalist></div>'
-        : inp('ncQuem','Cliente', ''))
-    + sel('ncCat','Categoria', opcoesCategorias(deb ? 'D' : 'C', '', '— selecione —'), '')
+        : inp('ncQuem','Cliente', '', '', 'text', 'oninput="sincronizaFavorecido()"'))
+    + sel('ncCat','Categoria', opcoesCategorias(deb ? 'D' : 'C', '', '— selecione —'), '', '', deb ? '' : 'onchange="montaRateio()"')
     + inp('ncVenc', deb ? 'Vencimento' : 'Previsão', m.DATA, '', 'date')
-    + inp('ncValor','Valor (R$)', valor)
+    + inp('ncValor','Valor (R$)', valor, '', 'text', deb ? '' : 'oninput="montaRateio()"')
     + '<div class="campo full"><label for="ncObs">Observações</label><textarea id="ncObs" rows="2"></textarea></div>'
+    + (deb ? '' : '<div class="full" id="boxRateio"></div><div class="full" id="boxRepasse" style="display:none"></div>')
     + '</div>'
     + '<p class="mini" style="margin-top:10px">Ao salvar, o registro é criado e este movimento já fica conciliado com ele.</p>';
   modal(deb ? 'Nova conta a pagar a partir do extrato' : 'Novo recebimento a partir do extrato', corpo,
     '<button class="btn sec" onclick="fecharModal()">Cancelar</button>'
     + '<button class="btn ok" onclick="gravarNovoNaConciliacao(\''+movId+'\')">Salvar e conciliar</button>');
+}
+/* mostra os campos de rateio quando a categoria escolhida divide com o cliente */
+function montaRateio(){
+  const box = document.getElementById('boxRateio'); if (!box) return;
+  const rep = document.getElementById('boxRepasse');
+  if (!catRateia(val('ncCat'))){
+    box.innerHTML = ''; if (rep){ rep.innerHTML = ''; rep.style.display = 'none'; }
+    return;
+  }
+  const total = rd(n(val('ncValor')));
+  box.innerHTML = '<div class="secao-form">Divisão do valor</div>'
+    + '<div class="grade">'
+    + inp('ncEsc','Valor do escritório (R$)', nMoeda(total), '', 'text', 'oninput="sincronizaRateio(\'esc\')"')
+    + inp('ncCli','Valor do cliente (R$)', nMoeda(0), '', 'text', 'oninput="sincronizaRateio(\'cli\')"')
+    + '</div>'
+    + '<p class="mini" id="avisoRateio" style="margin-top:4px">Total do crédito: '+moeda(total)+'. Ao digitar um lado, o outro é ajustado.</p>';
+  montaRepasse();
+  sincronizaRateio('esc');
+}
+function sincronizaRateio(origem){
+  const total = rd(n(val('ncValor')));
+  const eEsc = document.getElementById('ncEsc'), eCli = document.getElementById('ncCli');
+  if (!eEsc || !eCli) return;
+  if (origem === 'esc') eCli.value = nMoeda(rd(total - n(eEsc.value)));
+  else eEsc.value = nMoeda(rd(total - n(eCli.value)));
+  const cli = rd(n(eCli.value)), esc = rd(n(eEsc.value));
+  const aviso = document.getElementById('avisoRateio');
+  if (aviso) aviso.innerHTML = 'Total do crédito: <b>'+moeda(total)+'</b> — escritório '+moeda(esc)+' · cliente '+moeda(cli)
+    + (esc < 0 || cli < 0 ? ' <span class="neg">(um dos lados ficou negativo)</span>' : '');
+  const rep = document.getElementById('boxRepasse');
+  if (rep){
+    rep.style.display = cli > 0 ? 'block' : 'none';
+    const campoValor = document.getElementById('rpValor');
+    if (campoValor && document.activeElement !== campoValor) campoValor.value = nMoeda(cli);
+  }
+}
+/* campos da conta a pagar do repasse, montados uma vez e só exibidos quando há valor do cliente */
+function montaRepasse(){
+  const rep = document.getElementById('boxRepasse'); if (!rep || rep.innerHTML) return;
+  const mDatas = document.getElementById('ncVenc');
+  rep.innerHTML = '<div class="secao-form">Repasse ao cliente — conta a pagar</div>'
+    + '<div class="grade">'
+    + '<div class="campo"><label for="rpFav">Favorecido</label><div style="display:flex;gap:6px">'
+      + '<input id="rpFav" list="dlFav" autocomplete="off" value="'+esc(val('ncQuem'))+'" placeholder="digite para buscar" oninput="this.dataset.tocado=1" style="flex:1;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r)">'
+      + '<button class="btn sec" style="padding:8px 12px" title="Adicionar aos favorecidos" onclick="addFavorecidoRapido(\'rpFav\')">+</button></div>'
+      + '<datalist id="dlFav">'+optsFavorecidos()+'</datalist></div>'
+    + sel('rpCat','Categoria (débito)', opcoesCategorias('D', 'Repasse a cliente'), 'Repasse a cliente')
+    + inp('rpVenc','Vencimento', mDatas ? mDatas.value : hoje(), '', 'date')
+    + inp('rpValor','Valor do repasse (R$)', '')
+    + '<div class="campo full"><label for="rpObs">Observações do repasse</label><textarea id="rpObs" rows="2"></textarea></div>'
+    + '</div>';
+}
+/* o favorecido do repasse acompanha o cliente enquanto não for editado à mão */
+function sincronizaFavorecido(){
+  const f = document.getElementById('rpFav');
+  if (f && !f.dataset.tocado) f.value = val('ncQuem');
 }
 async function gravarNovoNaConciliacao(movId){
   const m = (DB.EXTRATO||[]).find(x => x.ID === movId); if (!m) return;
@@ -1662,17 +1735,42 @@ async function gravarNovoNaConciliacao(movId){
   const valor = rd(n(val('ncValor')));
   if (!valor) return toast('Informe o valor.','erro');
   const id = uid(deb ? 'cp' : 'cr');
-  const reg = deb
-    ? {ID:id, DESCRICAO:val('ncDesc'), FAVORECIDO:val('ncQuem'), CATEGORIA:val('ncCat'),
-       VENCIMENTO:val('ncVenc'), VALOR:valor, STATUS:'Em aberto', DATA_PGTO:'',
-       ORIGEM:'Lançado na conciliação', PARCELA_ID:'', ANEXO_URL:'', OBS:val('ncObs')}
-    : {ID:id, DESCRICAO:val('ncDesc'), CLIENTE:val('ncQuem'), CATEGORIA:val('ncCat'),
-       VENCIMENTO:val('ncVenc'), VALOR:valor, STATUS:'Em aberto', DATA_RECEB:'',
-       ORIGEM:'Lançado na conciliação', ANEXO_URL:'', OBS:val('ncObs')};
-  const aba = deb ? 'CONTAS_PAGAR' : 'CONTAS_RECEBER';
+  const lote = [];
+
+  if (deb){
+    lote.push({aba:'CONTAS_PAGAR', registro:{ID:id, DESCRICAO:val('ncDesc'), FAVORECIDO:val('ncQuem'),
+      CATEGORIA:val('ncCat'), VENCIMENTO:val('ncVenc'), VALOR:valor, STATUS:'Em aberto', DATA_PGTO:'',
+      ORIGEM:'Lançado na conciliação', PARCELA_ID:'', ANEXO_URL:'', OBS:val('ncObs')}});
+  } else {
+    const rateia = catRateia(val('ncCat'));
+    const esc = rateia ? rd(n(val('ncEsc'))) : valor;
+    const cli = rateia ? rd(n(val('ncCli'))) : 0;
+    if (rateia){
+      if (esc < 0 || cli < 0) return toast('Os valores do escritório e do cliente não podem ser negativos.','erro');
+      if (Math.abs(rd(esc + cli) - valor) > 0.01)
+        return toast('A soma do escritório com o cliente ('+moeda(rd(esc+cli))+') tem que fechar com o valor do crédito ('+moeda(valor)+').','erro');
+    }
+    let cpId = '';
+    if (cli > 0){
+      const vRep = rd(n(val('rpValor'))) || cli;
+      if (!val('rpFav')) return toast('Informe o favorecido do repasse ao cliente.','erro');
+      cpId = uid('cp');
+      lote.push({aba:'CONTAS_PAGAR', registro:{ID:cpId,
+        DESCRICAO: val('rpObs') ? val('ncDesc') + ' — repasse ao cliente' : 'Repasse ao cliente — ' + val('ncDesc'),
+        FAVORECIDO:val('rpFav'), CATEGORIA:val('rpCat') || 'Repasse a cliente', VENCIMENTO:val('rpVenc') || m.DATA,
+        VALOR:vRep, STATUS:'Em aberto', DATA_PGTO:'', ORIGEM:'Repasse de recebimento', PARCELA_ID:'', ANEXO_URL:'',
+        OBS: (val('rpObs') ? val('rpObs') + ' · ' : '')
+             + 'Crédito de ' + moeda(valor) + ' em ' + dataBR(m.DATA) + ' · escritório ' + moeda(esc) + ' · cliente ' + moeda(cli)}});
+    }
+    lote.push({aba:'CONTAS_RECEBER', registro:{ID:id, DESCRICAO:val('ncDesc'), CLIENTE:val('ncQuem'),
+      CATEGORIA:val('ncCat'), VENCIMENTO:val('ncVenc'), VALOR:valor, STATUS:'Em aberto', DATA_RECEB:'',
+      ORIGEM:'Lançado na conciliação', ANEXO_URL:'', OBS:val('ncObs'),
+      VALOR_ESCRITORIO:esc, VALOR_CLIENTE:cli, CP_ID:cpId}});
+  }
+
   fecharModal();
   try{
-    await salvarLoteRapido([{aba, registro:reg}]);
+    await salvarLoteRapido(lote);
     await conciliar(movId, id);
   }catch(e){}
 }
@@ -1888,7 +1986,8 @@ function telaReceber(){
   });
   (DB.CONTAS_RECEBER||[]).filter(c => c.STATUS !== 'Recebido').forEach(c =>
     L.push({id:c.ID, tipo:'avulso', pasta:'—', cliente:c.CLIENTE, proc:'', praca:'', desc:c.DESCRICAO,
-            venc:c.VENCIMENTO, valor:n(c.VALOR), cli:0, esc:n(c.VALOR), lanc:''}));
+            venc:c.VENCIMENTO, valor:n(c.VALOR), cli:n(c.VALOR_CLIENTE),
+            esc:n(c.VALOR_ESCRITORIO) || n(c.VALOR), lanc:''}));
 
   L = L.filter(r => casa(r, ['pasta','cliente','proc','desc'], t))
        .filter(r => !mes || mesDe(r.venc) === mes)
@@ -1971,7 +2070,8 @@ function telaRecebidas(){
   });
   (DB.CONTAS_RECEBER||[]).filter(c => c.STATUS === 'Recebido').forEach(c =>
     L.push({id:c.ID, pasta:'—', cliente:c.CLIENTE, proc:'', desc:c.DESCRICAO, data:c.DATA_RECEB,
-            valor:n(c.VALOR), cli:0, esc:n(c.VALOR), tar:0, lanc:''}));
+            valor:n(c.VALOR), cli:n(c.VALOR_CLIENTE),
+            esc:n(c.VALOR_ESCRITORIO) || n(c.VALOR), tar:0, lanc:''}));
 
   L = L.filter(r => casa(r, ['pasta','cliente','proc','desc'], t))
        .filter(r => !mes || mesDe(r.data) === mes)
@@ -2192,7 +2292,8 @@ function telaComissoes(){
   // uma linha por recebimento conciliado
   let recs = (DB.PARCELAS||[]).filter(p => p.STATUS === 'Recebida').map(p => {
     const l = lancDe(p.LANC_ID);
-    return {p, l, data:p.DATA_CREDITO, cliente:l.CLIENTE||'—', pasta:l.PASTA||'—', sub:l.SUBCLASSE||'—',
+    return {p, l, data:p.DATA_CREDITO, cliente:l.CLIENTE||'—', pasta:l.PASTA||'—',
+            sub:(l.SUBCLASSE||'—') + (l.EXEZ === 'SIM' ? ' · EXEZ' : ''),
             caiu:n(p.VALOR_CREDITADO||p.VALOR), esc:n(p.VALOR_ESCRITORIO),
             base:rd(n(p.VALOR_ESCRITORIO) - n(p.TARIFA)),
             itens:(DB.COMISSOES||[]).filter(c => c.PARCELA_ID === p.ID)};
@@ -2265,8 +2366,11 @@ function telaPainel(){
   const tarifas = recb.reduce((s,p) => s + n(p.TARIFA), 0);
   const hon = recb.filter(p => p.TIPO !== 'Sucumbência').reduce((s,p) => s + n(p.VALOR_ESCRITORIO) - n(p.TARIFA), 0);
   const suc = recb.filter(p => p.TIPO === 'Sucumbência').reduce((s,p) => s + n(p.VALOR_ESCRITORIO), 0);
-  const outras = (DB.CONTAS_RECEBER||[]).filter(c => c.STATUS === 'Recebido' && noMes(c.DATA_RECEB)).reduce((s,c) => s + n(c.VALOR), 0);
-  const repasses = recb.reduce((s,p) => s + n(p.VALOR_CLIENTE), 0);
+  // em recebimentos divididos, só a parte do escritório é receita; a do cliente é repasse
+  const crRecebidas = (DB.CONTAS_RECEBER||[]).filter(c => c.STATUS === 'Recebido' && noMes(c.DATA_RECEB));
+  const outras = crRecebidas.reduce((s,c) => s + (n(c.VALOR_ESCRITORIO) || n(c.VALOR)), 0);
+  const repasseAvulso = crRecebidas.reduce((s,c) => s + n(c.VALOR_CLIENTE), 0);
+  const repasses = recb.reduce((s,p) => s + n(p.VALOR_CLIENTE), 0) + repasseAvulso;
   const bruta = hon + suc + tarifas + outras;
 
   const desp = {};
