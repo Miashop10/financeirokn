@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>Financeiro — Escritório de Advocacia</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -244,7 +247,7 @@ table.dre tr.recuo td:first-child{padding-left:26px;color:var(--ink2)}
 
 <div id="app">
   <header>
-    <div class="marca">Financeiro<small id="hdEscritorio">Escritório de advocacia</small></div>
+    <div class="marca" id="hdMarca">Financeiro<small id="hdEscritorio">Escritório de advocacia</small></div>
     <div class="dir">
       <div id="net" class="net" title="Situação da conexão com o Google"><i></i><span>Conectando…</span></div>
       <div class="quem"><b id="hdUser"></b><br><span id="hdPerfil"></span></div>
@@ -267,6 +270,7 @@ table.dre tr.recuo td:first-child{padding-left:26px;color:var(--ink2)}
    CONFIGURAÇÃO — cole aqui a URL /exec do seu Apps Script
    ══════════════════════════════════════════════════════════ */
 const API_URL = 'https://script.google.com/macros/s/AKfycbzNNoolgJTQ5fKDmQ9ieSdWoLQrdKpRZB_GrxGHqtFjAFagZYoZ5a7_cCzfuDnvk05h/exec';
+const VERSAO_APP = 'v2.3';
 
 /* ── ESTADO ── */
 let DB = {}, USER = null, ABA = 'conciliacao', SUB = '', FILTROS = {};
@@ -324,7 +328,7 @@ const digitos = s => String(s||'').replace(/\D/g,'');
    Primeira letra de cada palavra maiúscula, o resto minúsculo.
    Preserva siglas conhecidas, palavras com número e conectores. */
 const SIGLAS = new Set(['FGTS','INSS','CNPJ','CPF','PIS','PASEP','ISS','IRRF','IR','TST','TRT','STJ','STF',
-  'CLT','RPV','OAB','DARF','GPS','DAS','ME','EPP','MEI','PJ','SA','EXEZ','FGV','IPTU','IPVA','ICMS','TED','PIX','DOC']);
+  'CLT','RPV','OAB','DARF','GPS','DAS','ME','EPP','MEI','PJ','SA','EXEC','FGV','IPTU','IPVA','ICMS','TED','PIX','DOC']);
 const CONECTORES = new Set(['de','da','do','das','dos','e','em','no','na','nos','nas','a','o','as','os',
   'para','com','por','sob','sobre','ao','aos','à','às','um','uma']);
 function tit(txt){
@@ -431,6 +435,8 @@ async function carregar(avisar){
     const j = await api({action:'carregar'});
     DB = j.dados; DB._planilha = j.planilha; DB._pasta = j.pasta; DB._versao = j.versao;
     $('#hdEscritorio').textContent = cfg('NOME_ESCRITORIO','Escritório de advocacia');
+    const marca = document.getElementById('hdMarca');
+    if (marca) marca.title = 'Página ' + VERSAO_APP + ' · servidor ' + (DB._versao || '—');
     render(); pintarNet();
     if (avisar) toast('Dados atualizados.','ok');
   }catch(e){ toast(e.message,'erro'); }
@@ -646,6 +652,19 @@ function garantirFavorecido(nome, categoria){
   if (categoria && !String(f.CATEGORIA||'').trim())
     return {aba:'FAVORECIDOS', registro: Object.assign({}, f, {CATEGORIA:categoria})};
   return null;
+}
+/* ao reconhecer o favorecido digitado, preenche a categoria padrão dele.
+   Se o usuário já escolheu a categoria à mão, o preenchimento não sobrescreve. */
+function aplicarCategoriaFavorecido(campoNome, campoCat){
+  const campo = document.getElementById(campoCat);
+  if (!campo || campo.dataset.tocado) return;
+  const nome = String(val(campoNome)||'').trim().toLowerCase();
+  if (!nome) return;
+  const f = (DB.FAVORECIDOS||[]).find(x => String(x.NOME).trim().toLowerCase() === nome);
+  if (!f || !f.CATEGORIA) return;
+  const existe = [...campo.options].some(o => o.value === f.CATEGORIA);
+  if (!existe) campo.add(new Option(f.CATEGORIA + ' (fora do cadastro)', f.CATEGORIA));
+  campo.value = f.CATEGORIA;
 }
 function optsFavorecidos(){
   return (DB.FAVORECIDOS||[]).filter(f => f.ATIVO !== 'NAO')
@@ -882,7 +901,7 @@ function cfgRegras(){
         ? '<b>'+nMoeda(r.PCT_BASE)+'%</b> do crédito'
         : '<span class="mini">o que ficou para o escritório</span>')+'</td>'
     + '<td class="num">'+nMoeda(r.PCT)+'%'
-    + (n(r.PCT_EXEZ) > 0 ? '<div class="mini">'+nMoeda(r.PCT_EXEZ)+'% com EXEZ</div>' : '')+'</td>'
+    + (n(r.PCT_EXEC) > 0 ? '<div class="mini">'+nMoeda(r.PCT_EXEC)+'% com EXEC</div>' : '')+'</td>'
     + '<td style="text-align:right;white-space:nowrap">'
     + '<button class="btn sm sec" onclick="formRegra(\''+r.ID+'\')">Editar</button> '
     + '<button class="btn sm per" onclick="apagarReg(\'REGRAS_COMISSAO\',\''+r.ID+'\',\'esta regra\',\'regras\')">Excluir</button></td></tr>').join('')
@@ -905,10 +924,10 @@ function cfgRegras(){
 function pracasDaRegra(r){
   return String((r && r.PRACAS) || '').split('|').map(s => s.trim()).filter(Boolean);
 }
-/* percentual da regra: usa o próprio da EXEZ quando o lançamento foi calculado por ela */
-function pctDaRegra(r, usouExez){
-  const alt = n(r && r.PCT_EXEZ);
-  return (usouExez && alt > 0) ? alt : n(r && r.PCT);
+/* percentual da regra: usa o próprio da EXEC quando o lançamento foi calculado por ela */
+function pctDaRegra(r, usouExec){
+  const alt = n(r && r.PCT_EXEC);
+  return (usouExec && alt > 0) ? alt : n(r && r.PCT);
 }
 function regraCobrePraca(r, praca){
   const L = pracasDaRegra(r);
@@ -926,8 +945,8 @@ function formRegra(id){
     + sel('erSub','Categoria (crédito)', opcoesCategorias('C', r.SUBCLASSE), r.SUBCLASSE)
     + sel('erCom','Comissionado', coms, r.COMISSIONADO_ID)
     + inp('erPct','% da comissão', id ? n(r.PCT) : (n(padrao && padrao.PCT_PADRAO) || 5), '', 'number', 'step="0.01"')
-    + inp('erPctExez','% da comissão quando usar a EXEZ', n(r.PCT_EXEZ) > 0 ? n(r.PCT_EXEZ) : '', '', 'number', 'step="0.01" placeholder="mesmo %"')
-    + '<p class="mini full" style="margin:-4px 0 2px">Em branco, vale o mesmo percentual nos dois casos. Preenchido, o sistema usa este quando o lançamento estiver marcado como calculado pela EXEZ — ex.: 33% normal e 31% com EXEZ.</p>'
+    + inp('erPctExec','% da comissão quando usar a EXEC', n(r.PCT_EXEC) > 0 ? n(r.PCT_EXEC) : '', '', 'number', 'step="0.01" placeholder="mesmo %"')
+    + '<p class="mini full" style="margin:-4px 0 2px">Em branco, vale o mesmo percentual nos dois casos. Preenchido, o sistema usa este quando o lançamento estiver marcado como calculado pela EXEC — ex.: 33% normal e 31% com EXEC.</p>'
     + inp('erBase','% do escritório usado como base', n(r.PCT_BASE) > 0 ? n(r.PCT_BASE) : '', '', 'number', 'step="0.01" placeholder="em branco"')
     + '<p class="mini full" style="margin:-4px 0 2px">Em branco, a comissão incide sobre o que realmente ficou para o escritório no processo. '
     + 'Preenchido, incide sempre sobre esse percentual do crédito — ex.: 30%, mesmo num processo em que o escritório ficou com 33%.</p>'
@@ -976,7 +995,7 @@ async function gravarRegra(id){
   if (repetida) return toast('Já existe uma regra igual para esse comissionado.','erro');
   const r = (DB.REGRAS_COMISSAO||[]).find(x => x.ID === id) || {};
   await salvar('REGRAS_COMISSAO', Object.assign({}, r, {ID:id||'', SUBCLASSE:val('erSub'),
-    COMISSIONADO_ID:val('erCom'), PCT:val('erPct')||'0', PCT_EXEZ:val('erPctExez')||'',
+    COMISSIONADO_ID:val('erCom'), PCT:val('erPct')||'0', PCT_EXEC:val('erPctExec')||'',
     PRACAS:PRACAS_REGRA.join('|'), PCT_BASE:val('erBase')||''}));
   abrirConfig('regras');
 }
@@ -991,7 +1010,9 @@ function cfgGeral(){
     + '<div style="margin-top:20px;border-top:1px solid var(--line2);padding-top:14px" class="mini">'
     + 'Planilha de dados: ' + (DB._planilha ? '<a href="'+esc(DB._planilha)+'" target="_blank" rel="noopener">abrir no Google Sheets</a>' : '—')
     + '<br>Pasta de arquivos: ' + (DB._pasta ? '<a href="'+esc(DB._pasta)+'" target="_blank" rel="noopener">abrir no Google Drive</a>' : '—')
-    + '<br>Versão do servidor: ' + esc(DB._versao || '—') + '</div>';
+    + '<br>Versão desta página: <b>' + VERSAO_APP + '</b>'
+    + '<br>Versão do servidor: ' + esc(DB._versao || '—')
+    + '<br>Se a versão da página estiver atrasada, atualize com Ctrl+Shift+R (ou Cmd+Shift+R no Mac).</div>';
 }
 async function gravarGeral(){
   const acha = k => (DB.CONFIG||[]).find(c => c.CHAVE === k) || {ID:'', CHAVE:k};
@@ -1036,7 +1057,7 @@ function telaLancamentos(){
     const pct = tot ? Math.round(totRec/tot*100) : 0;
     return '<tr><td>'+pastaCliente(l.PASTA, l.CLIENTE)+'</td>'
       + '<td>'+esc(l.N_PROCESSO||'—')+'<div class="mini">'+esc(l.PRACA||'')+'</div></td>'
-      + '<td>'+esc(l.SUBCLASSE||'—')+(l.EXEZ==='SIM'?' <span class="tag t-neutro">EXEZ</span>':'')+'</td>'
+      + '<td>'+esc(l.SUBCLASSE||'—')+(l.EXEC==='SIM'?' <span class="tag t-neutro">EXEC</span>':'')+'</td>'
       + '<td class="num">'+nMoeda(l.VALOR_TOTAL)+'</td>'
       + '<td class="num">'+nMoeda(l.SUCUMBENCIA)+'</td>'
       + '<td class="num">'+n(l.PCT_CLIENTE)+'% / '+n(l.PCT_ESCRITORIO)+'%</td>'
@@ -1089,7 +1110,7 @@ function formLanc(id){
     + inp('lcProc','Nº do processo', l.N_PROCESSO)
     + sel('lcPraca','Praça', prcs, l.PRACA)
     + sel('lcSub','Categoria', subs, l.SUBCLASSE)
-    + '<div class="check"><input type="checkbox" id="lcExez"'+(l.EXEZ==='SIM'?' checked':'')+'><label for="lcExez">Cálculo feito pela EXEZ</label></div>'
+    + '<div class="check"><input type="checkbox" id="lcExec"'+(l.EXEC==='SIM'?' checked':'')+'><label for="lcExec">Cálculo feito pela EXEC</label></div>'
 
     + '<div class="secao-form">Valores e rateio</div>'
     + inp('lcTotal','Valor total do acordo (R$)', l.VALOR_TOTAL ? nMoeda(l.VALOR_TOTAL) : '', '', 'text', 'oninput="recalcParcelas()"')
@@ -1156,7 +1177,7 @@ async function gravarLanc(id){
     VALOR_TOTAL: rd(PARC_TMP.reduce((s,p)=>s+n(p.VALOR),0)), QTD_PARCELAS: PARC_TMP.length,
     PCT_CLIENTE: pctCli, PCT_ESCRITORIO: pctEsc,
     TARIFA_ATIVA: val('lcTarifa') ? 'SIM' : 'NAO', TARIFA_VALOR: rd(n(val('lcTarifaV'))),
-    SUCUMBENCIA: rd(n(val('lcSuc'))), SUBCLASSE: val('lcSub'), EXEZ: val('lcExez') ? 'SIM' : 'NAO',
+    SUCUMBENCIA: rd(n(val('lcSuc'))), SUBCLASSE: val('lcSub'), EXEC: val('lcExec') ? 'SIM' : 'NAO',
     OBS: val('lcObs'), STATUS: 'Ativo',
     CRIADO_EM: (id && lancDe(id).CRIADO_EM) || new Date().toISOString().slice(0,16).replace('T',' '),
     CRIADO_POR: (id && lancDe(id).CRIADO_POR) || (USER ? USER.NOME : '')
@@ -1567,7 +1588,7 @@ async function conciliarParcela(m, p){
     .forEach(r => {
       // base própria: % fixo do crédito, independente do rateio do processo
       const base = n(r.PCT_BASE) > 0 ? rd(valor * n(r.PCT_BASE) / 100) : baseCom;
-      const pctAplicado = pctDaRegra(r, l.EXEZ === 'SIM');
+      const pctAplicado = pctDaRegra(r, l.EXEC === 'SIM');
       const v = rd(base * pctAplicado / 100);
       if (v <= 0) return;
       lote.push({aba:'COMISSOES', registro:{ ID:uid('co'), PARCELA_ID:p.ID, LANC_ID:l.ID, CLIENTE:l.CLIENTE||'',
@@ -1605,7 +1626,7 @@ async function conciliarRecebimento(m, cr){
   comissoesDoRecebimento(cr, valor, m.DATA).forEach(c => lote.push(c));
   try{ await salvarLoteRapido(lote); toast('Recebimento de '+moeda(valor)+' conciliado e salvo.','ok'); }catch(e){}
 }
-/* comissões do recebimento avulso: mesmas regras das parcelas — categoria, praça e o % próprio da EXEZ */
+/* comissões do recebimento avulso: mesmas regras das parcelas — categoria, praça e o % próprio da EXEC */
 function comissoesDoRecebimento(cr, valor, data){
   const baseCom = rd((n(cr.VALOR_ESCRITORIO) || 0) - n(cr.TARIFA));
   if (baseCom <= 0) return [];
@@ -1614,7 +1635,7 @@ function comissoesDoRecebimento(cr, valor, data){
     .filter(r => regraCobrePraca(r, cr.PRACA))
     .map(r => {
       const base = n(r.PCT_BASE) > 0 ? rd(n(valor) * n(r.PCT_BASE) / 100) : baseCom;
-      const pctAplicado = pctDaRegra(r, cr.EXEZ === 'SIM');
+      const pctAplicado = pctDaRegra(r, cr.EXEC === 'SIM');
       const v = rd(base * pctAplicado / 100);
       if (v <= 0) return null;
       return {aba:'COMISSOES', registro:{ ID:uid('co'), PARCELA_ID:cr.ID, LANC_ID:'', CLIENTE:cr.CLIENTE||'',
@@ -1718,18 +1739,19 @@ function formNovoNaConciliacao(movId){
     + inp('ncDesc','Descrição', m.IDENTIFICACAO || '', 'full')
     + (deb
         ? '<div class="campo"><label for="ncQuem">Favorecido</label><div style="display:flex;gap:6px">'
-          + '<input id="ncQuem" list="dlFav" autocomplete="off" placeholder="digite para buscar" style="flex:1;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r)">'
+          + '<input id="ncQuem" list="dlFav" autocomplete="off" placeholder="digite para buscar" oninput="aplicarCategoriaFavorecido(\'ncQuem\',\'ncCat\')" style="flex:1;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r)">'
           + '<button class="btn sec" style="padding:8px 12px" title="Adicionar aos favorecidos" onclick="addFavorecidoRapido(\'ncQuem\',\'ncCat\')">+</button></div>'
           + '<datalist id="dlFav">'+optsFavorecidos()+'</datalist></div>'
         : inp('ncQuem','Cliente', '', '', 'text', 'oninput="sincronizaFavorecido()"'))
-    + sel('ncCat','Categoria', opcoesCategorias(deb ? 'D' : 'C', '', '— selecione —'), '', '', deb ? '' : 'onchange="montaRateio()"')
-    + inp('ncVenc', deb ? 'Vencimento' : 'Previsão', m.DATA, '', 'date')
+    + sel('ncCat','Categoria', opcoesCategorias(deb ? 'D' : 'C', '', '— selecione —'), '', '',
+        deb ? 'onchange="this.dataset.tocado=1"' : 'onchange="montaRateio()"')
+    + inp('ncVenc', deb ? 'Vencimento' : 'Data', m.DATA, '', 'date')
     + inp('ncValor','Valor (R$)', valor, '', 'text', deb ? '' : 'oninput="montaRateio()"')
     + (deb ? '' :
         inp('ncPasta','Pasta do cliente', '')
       + sel('ncPraca','Praça', [['','— selecione —']].concat((DB.PRACAS||[]).filter(x => x.ATIVO !== 'NAO')
           .map(x => [x.NOME, x.NOME + (x.UF ? ' / ' + x.UF : '')])), '')
-      + '<div class="check"><input type="checkbox" id="ncExez"><label for="ncExez">Cálculo feito pela EXEZ</label></div>')
+      + '<div class="check"><input type="checkbox" id="ncExec"><label for="ncExec">Cálculo feito pela EXEC</label></div>')
     + '<div class="campo full"><label for="ncObs">Observações</label><textarea id="ncObs" rows="2"></textarea></div>'
     + (deb ? '' : '<div class="full" id="boxRateio"></div><div class="full" id="boxRepasse" style="display:none"></div>')
     + '</div>'
@@ -1838,7 +1860,7 @@ async function gravarNovoNaConciliacao(movId){
       if (esc < 0 || cli < 0) return toast('Com a tarifa, um dos lados ficou negativo. Revise os valores.','erro');
     }
     const dadosCR = {DESCRICAO:tit(val('ncDesc')), CLIENTE:tit(val('ncQuem')), PASTA:tit(val('ncPasta')),
-      PRACA:val('ncPraca'), FILIAL:'', EXEZ: val('ncExez') ? 'SIM' : 'NAO'};
+      PRACA:val('ncPraca'), FILIAL:'', EXEC: val('ncExec') ? 'SIM' : 'NAO'};
     let cpId = '';
     if (cli > 0){
       const vRep = rd(n(val('rpValor'))) || cli;
@@ -2376,7 +2398,7 @@ function dadosDoRecebimento(cr){
   const p = [];
   if (cr.PASTA) p.push('pasta ' + cr.PASTA);
   if (cr.PRACA) p.push('praça ' + cr.PRACA);
-  if (cr.EXEZ === 'SIM') p.push('cálculo pela EXEZ');
+  if (cr.EXEC === 'SIM') p.push('cálculo pela EXEC');
   return p.join(' · ');
 }
 function descricaoRepasse(cr){
@@ -2408,8 +2430,8 @@ function formRecebida(id){
     + inp('rePasta','Pasta do cliente', c.PASTA)
     + sel('rePraca','Praça', [['','— selecione —']].concat((DB.PRACAS||[]).filter(x => x.ATIVO !== 'NAO' || x.NOME === c.PRACA)
         .map(x => [x.NOME, x.NOME + (x.UF ? ' / ' + x.UF : '')])), c.PRACA)
-    + '<div class="check"><input type="checkbox" id="reExez"'+(c.EXEZ==='SIM'?' checked':'')+'>'
-      + '<label for="reExez">Cálculo feito pela EXEZ</label></div>'
+    + '<div class="check"><input type="checkbox" id="reExec"'+(c.EXEC==='SIM'?' checked':'')+'>'
+      + '<label for="reExec">Cálculo feito pela EXEC</label></div>'
     + '<div class="secao-form">Divisão do valor</div>'
     + inp('reEsc','Valor do escritório (R$)', nMoeda(esc0), '', 'text', 'oninput="sincronizaRecebida(\'esc\')"')
     + inp('reCli','Valor do cliente (R$)', nMoeda(cli0), '', 'text', 'oninput="sincronizaRecebida(\'cli\')"')
@@ -2468,7 +2490,7 @@ async function gravarRecebida(id, total){
   const atualizado = Object.assign({}, c, {
     DESCRICAO:tit(val('reDesc')), CLIENTE:tit(val('reCliente')), CATEGORIA:val('reCat'),
     PASTA:tit(val('rePasta')), PRACA:val('rePraca'), FILIAL:'',
-    EXEZ: val('reExez') ? 'SIM' : 'NAO',
+    EXEC: val('reExec') ? 'SIM' : 'NAO',
     VALOR_ESCRITORIO:esc2, VALOR_CLIENTE:cli2, CP_ID:cpId, TARIFA:tar, OBS:val('reObs')});
   lote.push({aba:'CONTAS_RECEBER', registro: atualizado});
 
@@ -2628,7 +2650,7 @@ function formCP(id){
       + '<input id="cpFav" list="dlFav" autocomplete="off" value="'+esc(c.FAVORECIDO||'')+'" placeholder="digite para buscar" oninput="favEscolhido()" style="flex:1;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r)">'
       + '<button class="btn sec" style="padding:8px 12px" title="Adicionar aos favorecidos" onclick="addFavorecidoRapido(\'cpFav\',\'cpCat\')">+</button></div>'
       + '<datalist id="dlFav">'+optsFavorecidos()+'</datalist></div>'
-    + sel('cpCat','Categoria (débito)', opcoesCategorias('D', c.CATEGORIA, '— selecione —'), c.CATEGORIA)
+    + sel('cpCat','Categoria (débito)', opcoesCategorias('D', c.CATEGORIA, '— selecione —'), c.CATEGORIA, '', 'onchange="this.dataset.tocado=1"')
     + inp('cpVenc','Vencimento', c.VENCIMENTO || hoje(), '', 'date')
     + inp('cpValor','Valor (R$)', c.VALOR ? nMoeda(c.VALOR) : '')
     + '<div class="campo full"><label for="cpObs">Observações</label><textarea id="cpObs" rows="2">'+esc(c.OBS||'')+'</textarea></div>'
@@ -2640,11 +2662,7 @@ function formCP(id){
     '<button class="btn sec" onclick="fecharModal()">Cancelar</button><button class="btn" onclick="gravarCP(\''+(id||'')+'\')">Salvar conta</button>');
 }
 /* ao escolher um favorecido já cadastrado, puxa a categoria padrão dele */
-function favEscolhido(){
-  const f = (DB.FAVORECIDOS||[]).find(x => x.NOME.toLowerCase() === val('cpFav').toLowerCase());
-  const campo = document.getElementById('cpCat');
-  if (f && f.CATEGORIA && campo) campo.value = f.CATEGORIA;
-}
+function favEscolhido(){ aplicarCategoriaFavorecido('cpFav','cpCat'); }
 function toggleRec(){
   const box = document.getElementById('boxRec');
   if (!val('cpRec')){ box.innerHTML = ''; REC_TMP = []; return; }
@@ -2724,7 +2742,7 @@ function telaComissoes(){
   let recs = (DB.PARCELAS||[]).filter(p => p.STATUS === 'Recebida').map(p => {
     const l = lancDe(p.LANC_ID);
     return {p, l, data:p.DATA_CREDITO, cliente:l.CLIENTE||'—', pasta:l.PASTA||'—',
-            sub:(l.SUBCLASSE||'—') + (l.EXEZ === 'SIM' ? ' · EXEZ' : ''),
+            sub:(l.SUBCLASSE||'—') + (l.EXEC === 'SIM' ? ' · EXEC' : ''),
             caiu:n(p.VALOR_CREDITADO||p.VALOR), esc:n(p.VALOR_ESCRITORIO),
             base:rd(n(p.VALOR_ESCRITORIO) - n(p.TARIFA)),
             itens:(DB.COMISSOES||[]).filter(c => c.PARCELA_ID === p.ID)};
@@ -2733,7 +2751,7 @@ function telaComissoes(){
   (DB.CONTAS_RECEBER||[]).filter(c => c.STATUS === 'Recebido').forEach(c => {
     const esc2 = n(c.VALOR_ESCRITORIO) || n(c.VALOR);
     recs.push({p:null, l:{}, data:c.DATA_RECEB, cliente:c.CLIENTE || c.DESCRICAO || '—',
-      pasta:c.PASTA || '—', sub:(c.CATEGORIA||'—') + (c.EXEZ === 'SIM' ? ' · EXEZ' : ''),
+      pasta:c.PASTA || '—', sub:(c.CATEGORIA||'—') + (c.EXEC === 'SIM' ? ' · EXEC' : ''),
       caiu:n(c.VALOR), esc:esc2, base:rd(esc2 - n(c.TARIFA)),
       itens:(DB.COMISSOES||[]).filter(x => x.PARCELA_ID === c.ID)});
   });
