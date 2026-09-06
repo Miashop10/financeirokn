@@ -1257,25 +1257,11 @@ async function gravarLanc(id){
   }catch(e){ toast(e.message,'erro'); }
   finally{ carregandoOff(); }
 }
-async function excluirLanc(id){
+function excluirLanc(id){
   const l = lancDe(id);
   const ps = (DB.PARCELAS||[]).filter(p => p.LANC_ID === id);
-  if (ps.some(p => p.STATUS === 'Recebida'))
-    return toast('Há parcelas já conciliadas. Desfaça a conciliação antes de excluir.','erro');
-  if (!confirm('Excluir o lançamento de "'+(l.CLIENTE||'')+'" e suas '+ps.length+' parcela(s)?')) return;
-  carregandoOn('Excluindo…');
-  try{
-    const ids = new Set(ps.map(p => p.ID));
-    const cps = (DB.CONTAS_PAGAR||[]).filter(c => ids.has(c.PARCELA_ID) && c.STATUS !== 'Pago');
-    await api({action:'excluirLote', lote: ps.map(p => ({aba:'PARCELAS', id:p.ID}))
-      .concat(cps.map(c => ({aba:'CONTAS_PAGAR', id:c.ID})))
-      .concat([{aba:'LANCAMENTOS', id}])});
-    const idsCp = new Set(cps.map(c => c.ID));
-    DB.CONTAS_PAGAR = (DB.CONTAS_PAGAR||[]).filter(c => !idsCp.has(c.ID));
-    DB.PARCELAS = (DB.PARCELAS||[]).filter(p => !ids.has(p.ID));
-    DB.LANCAMENTOS = (DB.LANCAMENTOS||[]).filter(l2 => l2.ID !== id);
-    render(); toast('Lançamento excluído.','ok');
-  }catch(e){ toast(e.message,'erro'); } finally{ carregandoOff(); }
+  return excluirComRetorno([{aba:'LANCAMENTOS', id}],
+    'o lançamento de "' + (l.CLIENTE||'') + '" e suas ' + ps.length + ' parcela(s)');
 }
 function verParcelas(id){
   const l = lancDe(id);
@@ -1861,7 +1847,7 @@ async function gravarNovoNaConciliacao(movId){
       lote.push({aba:'CONTAS_PAGAR', registro:{ID:cpId,
         DESCRICAO: 'Repasse ao cliente — ' + tit(val('ncDesc')),
         FAVORECIDO:tit(val('rpFav')), CATEGORIA:val('rpCat') || 'Repasse a cliente', VENCIMENTO:val('rpVenc') || m.DATA,
-        VALOR:vRep, STATUS:'Em aberto', DATA_PGTO:'', ORIGEM:'Repasse de recebimento', PARCELA_ID:'', ANEXO_URL:'',
+        VALOR:vRep, STATUS:'Em aberto', DATA_PGTO:'', ORIGEM:'Repasse de recebimento', PARCELA_ID:id, ANEXO_URL:'',
         OBS: (val('rpObs') ? val('rpObs') + ' · ' : '')
              + 'Crédito de ' + moeda(valor) + ' em ' + dataBR(m.DATA)
              + ' · escritório ' + moeda(esc) + ' (' + pctSobre(esc, valor) + ')'
@@ -2137,6 +2123,85 @@ async function confirmarImport(){
   }catch(e){ toast(e.message,'erro'); } finally{ carregandoOff(); }
 }
 /* ══════════════════ CONTAS A RECEBER ══════════════════ */
+/* ══════════════════════════════════════════════════════════
+   Exclusão com retorno à conciliação.
+   Excluir um registro já conciliado devolve o movimento do
+   extrato para "pendente", pronto para ser conciliado de novo.
+   ══════════════════════════════════════════════════════════ */
+const movsConciliadosDe = refId => (DB.EXTRATO||[]).filter(m => m.PARCELA_ID === refId && m.STATUS === 'Conciliado');
+
+function planoExclusao(refs){
+  const apagar = [], vistos = new Set(), movs = new Set(), limparCR = new Set();
+  const add = (aba, id) => {
+    const k = aba + '|' + id;
+    if (!id || vistos.has(k)) return false;
+    vistos.add(k); apagar.push({aba, id}); return true;
+  };
+  const incluirCP = cp => {
+    if (!cp || !add('CONTAS_PAGAR', cp.ID)) return;
+    movsConciliadosDe(cp.ID).forEach(m => movs.add(m.ID));       // o pagamento também volta
+    (DB.COMISSOES||[]).filter(c => c.CP_ID === cp.ID).forEach(c => add('COMISSOES', c.ID));
+  };
+
+  (refs||[]).forEach(r => {
+    if (r.aba === 'LANCAMENTOS'){
+      add('LANCAMENTOS', r.id);
+      (DB.PARCELAS||[]).filter(p => p.LANC_ID === r.id).forEach(p => refs.push({aba:'PARCELAS', id:p.ID}));
+
+    } else if (r.aba === 'PARCELAS'){
+      const p = parcDe(r.id); if (!p) return;
+      add('PARCELAS', p.ID);
+      movsConciliadosDe(p.ID).forEach(m => movs.add(m.ID));
+      (DB.COMISSOES||[]).filter(c => c.PARCELA_ID === p.ID).forEach(c => add('COMISSOES', c.ID));
+      incluirCP((DB.CONTAS_PAGAR||[]).find(c => c.ID === p.CP_ID
+        || (c.PARCELA_ID === p.ID && c.CATEGORIA === 'Repasse a cliente')));
+
+    } else if (r.aba === 'CONTAS_RECEBER'){
+      const cr = (DB.CONTAS_RECEBER||[]).find(x => x.ID === r.id); if (!cr) return;
+      add('CONTAS_RECEBER', cr.ID);
+      movsConciliadosDe(cr.ID).forEach(m => movs.add(m.ID));
+      incluirCP((DB.CONTAS_PAGAR||[]).find(c => c.ID === cr.CP_ID));
+
+    } else if (r.aba === 'CONTAS_PAGAR'){
+      const cp = (DB.CONTAS_PAGAR||[]).find(x => x.ID === r.id); if (!cp) return;
+      incluirCP(cp);
+      const cr = (DB.CONTAS_RECEBER||[]).find(x => x.CP_ID === cp.ID);
+      if (cr && !vistos.has('CONTAS_RECEBER|' + cr.ID)) limparCR.add(cr.ID);
+    }
+  });
+
+  // movimentos voltam para pendentes; contas a receber que perderam o repasse ficam sem vínculo
+  const atualizar = [];
+  [...movs].forEach(id => {
+    const m = (DB.EXTRATO||[]).find(x => x.ID === id);
+    if (m) atualizar.push({aba:'EXTRATO', registro: Object.assign({}, m, {STATUS:'Pendente', PARCELA_ID:''})});
+  });
+  [...limparCR].forEach(id => {
+    const cr = (DB.CONTAS_RECEBER||[]).find(x => x.ID === id);
+    if (cr) atualizar.push({aba:'CONTAS_RECEBER', registro: Object.assign({}, cr, {CP_ID:''})});
+  });
+  return {apagar, atualizar, movs:[...movs]};
+}
+
+async function excluirComRetorno(refs, rotulo){
+  const plano = planoExclusao(refs);
+  if (!plano.apagar.length) return toast('Nada a excluir.','erro');
+  const qtdMov = plano.movs.length;
+  if (!confirm('Excluir ' + (rotulo || plano.apagar.length + ' registro(s)') + '?'
+      + (qtdMov ? '\n\n' + qtdMov + ' movimento(s) do extrato voltam para a conciliação, prontos para serem conciliados de novo.' : ''))) return;
+  carregandoOn('Excluindo…');
+  try{
+    if (plano.atualizar.length) await salvarLoteRapido(plano.atualizar);
+    for (let i=0;i<plano.apagar.length;i+=150){
+      await api({action:'excluirLote', lote: plano.apagar.slice(i, i+150)});
+    }
+    plano.apagar.forEach(a => { DB[a.aba] = (DB[a.aba]||[]).filter(x => x.ID !== a.id); });
+    SELR = new Set();
+    render();
+    toast('Excluído.' + (qtdMov ? ' ' + qtdMov + ' movimento(s) voltaram para a conciliação.' : ''), 'ok');
+  }catch(e){ toast(e.message,'erro'); } finally{ carregandoOff(); }
+}
+
 /* seleção múltipla em contas a receber */
 let SELR = new Set(), SELR_VISIVEIS = [];
 function marcarReceber(id, marcado){
@@ -2147,45 +2212,10 @@ function selecionarTodosReceber(marcado){
   SELR = marcado ? new Set(SELR_VISIVEIS) : new Set();
   render();
 }
-/* exclui parcelas e recebimentos avulsos, junto com o repasse que cada um gerou */
-async function excluirReceber(ids){
-  const apagar = [], travados = [];
-  ids.forEach(id => {
-    const p = parcDe(id);
-    if (p){
-      if (p.STATUS === 'Recebida'){ travados.push('parcela já conciliada'); return; }
-      const cp = (DB.CONTAS_PAGAR||[]).find(c => c.ID === p.CP_ID
-        || (c.PARCELA_ID === p.ID && c.CATEGORIA === 'Repasse a cliente'));
-      if (cp && cp.STATUS === 'Pago'){ travados.push('repasse já pago'); return; }
-      apagar.push({aba:'PARCELAS', id:p.ID});
-      if (cp) apagar.push({aba:'CONTAS_PAGAR', id:cp.ID});
-      return;
-    }
-    const cr = (DB.CONTAS_RECEBER||[]).find(c => c.ID === id);
-    if (cr){
-      if (cr.STATUS === 'Recebido'){ travados.push('recebimento já conciliado'); return; }
-      const cp = (DB.CONTAS_PAGAR||[]).find(c => c.ID === cr.CP_ID);
-      if (cp && cp.STATUS === 'Pago'){ travados.push('repasse já pago'); return; }
-      apagar.push({aba:'CONTAS_RECEBER', id:cr.ID});
-      if (cp) apagar.push({aba:'CONTAS_PAGAR', id:cp.ID});
-    }
-  });
-  if (!apagar.length)
-    return toast(travados.length ? 'Nada excluído: ' + travados[0] + '. Desfaça a conciliação antes.' : 'Nada a excluir.','erro');
-
-  const qtdReg = apagar.filter(a => a.aba !== 'CONTAS_PAGAR').length;
-  const qtdRep = apagar.length - qtdReg;
-  if (!confirm('Excluir ' + qtdReg + ' lançamento(s)'
-      + (qtdRep ? ' e ' + qtdRep + ' repasse(s) ao cliente gerado(s) por eles' : '') + '?')) return;
-
-  carregandoOn('Excluindo…');
-  try{
-    await api({action:'excluirLote', lote:apagar});
-    apagar.forEach(a => { DB[a.aba] = (DB[a.aba]||[]).filter(x => x.ID !== a.id); });
-    SELR = new Set();
-    render();
-    toast(qtdReg + ' lançamento(s) excluído(s).' + (travados.length ? ' ' + travados.length + ' não pôde(ram) ser excluído(s).' : ''), 'ok');
-  }catch(e){ toast(e.message,'erro'); } finally{ carregandoOff(); }
+/* exclui parcelas e recebimentos, junto com o repasse e as comissões que geraram */
+function excluirReceber(ids){
+  const refs = ids.map(id => parcDe(id) ? {aba:'PARCELAS', id} : {aba:'CONTAS_RECEBER', id});
+  return excluirComRetorno(refs, ids.length + ' lançamento(s) e o que eles geraram');
 }
 function excluirSelecionadosReceber(){ excluirReceber([...SELR]); }
 
@@ -2281,12 +2311,8 @@ async function gravarCR(id){
     STATUS: atual.STATUS || 'Em aberto', DATA_RECEB: atual.DATA_RECEB || '', ORIGEM: atual.ORIGEM || 'Manual'}));
   fecharModal(); render();
 }
-async function apagarSimples(aba, id){
-  const r = (DB[aba]||[]).find(x => x.ID === id) || {};
-  if (r.STATUS === 'Pago' || r.STATUS === 'Recebido')
-    return toast('Registro já baixado pelo extrato. Desfaça a conciliação antes de excluir.','erro');
-  if (!confirm('Excluir este registro?')) return;
-  await excluir(aba, id); render(); toast('Excluído.','ok');
+function apagarSimples(aba, id){
+  return excluirComRetorno([{aba, id}], 'este registro');
 }
 
 /* ══════════════════ CONTAS RECEBIDAS ══════════════════ */
@@ -2415,7 +2441,7 @@ async function gravarRecebida(id, total){
       ID:cpId, DESCRICAO:'Repasse ao cliente — ' + tit(val('reDesc')), FAVORECIDO:tit(val('reCliente')),
       CATEGORIA:(cp && cp.CATEGORIA) || 'Repasse a cliente', VENCIMENTO:(cp && cp.VENCIMENTO) || c.DATA_RECEB,
       VALOR:cli2, STATUS:(cp && cp.STATUS) || 'Em aberto', DATA_PGTO:(cp && cp.DATA_PGTO) || '',
-      ORIGEM:'Repasse de recebimento', PARCELA_ID:'', ANEXO_URL:'',
+      ORIGEM:'Repasse de recebimento', PARCELA_ID:c.ID, ANEXO_URL:'',
       OBS:'Crédito de '+moeda(total)+' em '+dataBR(c.DATA_RECEB)+' · escritório '+moeda(esc2)
           +' ('+pctSobre(esc2,total)+') · cliente '+moeda(cli2)+' ('+pctSobre(cli2,total)+')'})});
   } else if (cp && cp.STATUS !== 'Pago'){
@@ -2445,12 +2471,27 @@ function liberacao(c){
   if (p) return p.STATUS === 'Recebida'
     ? {tipo:'ok', p, quando:p.DATA_CREDITO, titulo:'Recebido em ' + dataBR(p.DATA_CREDITO) + ' — liberado para pagamento'}
     : {tipo:'nao', p, quando:'', titulo:'Parcela ainda não conciliada — aguardando o crédito de ' + moeda(p.VALOR)};
-  // repasse gerado por um recebimento avulso: o vínculo é o CP_ID guardado na conta a receber
-  const cr = (DB.CONTAS_RECEBER||[]).find(x => x.CP_ID && x.CP_ID === c.ID);
+  const cr = recebimentoDoRepasse(c);
   if (cr) return cr.STATUS === 'Recebido'
     ? {tipo:'ok', cr, quando:cr.DATA_RECEB, titulo:'Recebido em ' + dataBR(cr.DATA_RECEB) + ' — liberado para pagamento'}
     : {tipo:'nao', cr, quando:'', titulo:'Recebimento ainda não conciliado — aguardando o crédito de ' + moeda(cr.VALOR)};
   return {tipo:'na'};
+}
+/* Acha o recebimento que originou um repasse.
+   Tenta os dois vínculos gravados e, para os repasses criados antes de existir
+   esse vínculo, casa pelo valor e pelo nome do cliente. */
+function recebimentoDoRepasse(c){
+  const L = DB.CONTAS_RECEBER || [];
+  if (c.PARCELA_ID){
+    const direto = L.find(x => x.ID === c.PARCELA_ID);
+    if (direto) return direto;
+  }
+  const porCp = L.find(x => x.CP_ID && x.CP_ID === c.ID);
+  if (porCp) return porCp;
+  if (c.CATEGORIA !== 'Repasse a cliente' && c.ORIGEM !== 'Repasse de recebimento') return null;
+  const valor = rd(n(c.VALOR)), quem = String(c.FAVORECIDO||'').trim().toLowerCase();
+  return L.find(x => rd(n(x.VALOR_CLIENTE)) === valor && valor > 0
+    && (!quem || String(x.CLIENTE||'').trim().toLowerCase() === quem)) || null;
 }
 function selo(c){
   const s = liberacao(c);
@@ -3037,7 +3078,8 @@ function telaPagas(){
       + (c.ORIGEM && c.ORIGEM !== 'Manual' ? '<div class="mini">'+esc(c.ORIGEM)+'</div>' : '') + '</td>'
       + '<td>'+esc(c.FAVORECIDO||'—')+'</td><td>'+esc(c.CATEGORIA||'—')+'</td>'
       + '<td class="num">'+nMoeda(c.VALOR)+'</td>'
-      + '<td style="text-align:right">'+botaoDesfazerPago(c)+'</td></tr>').join('')
+      + '<td style="text-align:right;white-space:nowrap">'+botaoDesfazerPago(c)
+      + ' <button class="btn sm per" onclick="apagarSimples(\'CONTAS_PAGAR\',\''+c.ID+'\')">Excluir</button></td></tr>').join('')
       : '<tr><td colspan="7">'+vazio('Nenhuma conta paga','As contas aparecem aqui quando o débito correspondente é conciliado no extrato.')+'</td></tr>')
     + '</tbody></table></div></div>';
 }
