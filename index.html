@@ -66,20 +66,23 @@ header .quem{font-size:12px;opacity:.8;text-align:right}
 .net.off i,.net.erro i{background:#ff8b7a}
 .net.off,.net.erro{background:rgba(255,120,100,.22)}
 @keyframes pulsa{0%,100%{opacity:1}50%{opacity:.3}}
-.conc{display:grid;grid-template-columns:minmax(220px,290px) 1fr;gap:14px;align-items:start}
-.conc .lado{border-right:1px solid var(--line2);padding-right:14px}
-.conc .lado .valor{font-family:'IBM Plex Mono',monospace;font-size:17px;font-weight:600;letter-spacing:-.4px;display:block;margin-bottom:2px}
-.conc .lado .hist{font-size:12px;line-height:1.35;color:var(--ink2);max-height:2.7em;overflow:hidden}
-.conc .lado .acoes{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px}
-.conc .lado .acoes button{padding:3px 8px;font-size:11.5px}
-.card.fino{margin-bottom:9px}
-.card.fino .corpo{padding:9px 12px}
-.card.fino .sug{padding:4px 9px;margin-bottom:3px;gap:8px}
-.card.fino .sug .info b{font-size:12.5px}
-.card.fino .sug .porq{font-size:11px;margin-top:0;line-height:1.3}
-.card.fino .score{font-size:10.5px;padding:1px 6px}
-.card.fino .btn.sm{padding:3px 9px;font-size:11.5px}
-@media(max-width:760px){.conc{grid-template-columns:1fr;gap:10px}.conc .lado{border-right:0;border-bottom:1px solid var(--line2);padding:0 0 10px}}
+.conc{display:grid;grid-template-columns:minmax(210px,270px) 1fr;gap:11px;align-items:start}
+.conc .lado{border-right:1px solid var(--line2);padding-right:11px}
+.conc .lado .topo{display:flex;gap:6px;align-items:baseline;flex-wrap:wrap}
+.conc .lado .valor{font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:600;letter-spacing:-.3px}
+.conc .lado .hist{font-size:11.5px;line-height:1.3;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+.conc .lado .acoes{display:flex;flex-wrap:wrap;gap:3px;margin-top:4px}
+.conc .lado .acoes button{padding:1px 7px;font-size:11px}
+.card.fino{margin-bottom:5px}
+.card.fino .corpo{padding:6px 10px}
+.card.fino .sug{padding:2px 8px;margin-bottom:2px;gap:6px;align-items:center}
+.card.fino .sug .info{display:flex;gap:6px;align-items:baseline;min-width:0;white-space:nowrap;overflow:hidden}
+.card.fino .sug .info b{font-size:12.5px;flex:none}
+.card.fino .sug .info .det{font-size:11px;color:var(--ink2);overflow:hidden;text-overflow:ellipsis}
+.card.fino .score{font-size:10.5px;padding:0 6px}
+.card.fino .btn.sm{padding:2px 9px;font-size:11.5px}
+.maisSug{background:none;border:0;color:var(--brand);font-size:11.5px;padding:2px 0;text-decoration:underline}
+@media(max-width:760px){.conc{grid-template-columns:1fr;gap:8px}.conc .lado{border-right:0;border-bottom:1px solid var(--line2);padding:0 0 8px}}
 .icobtn{width:34px;height:34px;border-radius:var(--r);border:1px solid rgba(255,255,255,.22);background:transparent;color:#fff;display:grid;place-items:center;font-size:16px}
 .icobtn:hover{background:rgba(255,255,255,.13)}
 
@@ -270,7 +273,7 @@ table.dre tr.recuo td:first-child{padding-left:26px;color:var(--ink2)}
    CONFIGURAÇÃO — cole aqui a URL /exec do seu Apps Script
    ══════════════════════════════════════════════════════════ */
 const API_URL = 'https://script.google.com/macros/s/AKfycbzNNoolgJTQ5fKDmQ9ieSdWoLQrdKpRZB_GrxGHqtFjAFagZYoZ5a7_cCzfuDnvk05h/exec';
-const VERSAO_APP = 'v2.3';
+const VERSAO_APP = 'v2.5';
 
 /* ── ESTADO ── */
 let DB = {}, USER = null, ABA = 'conciliacao', SUB = '', FILTROS = {};
@@ -519,6 +522,38 @@ function setF(k, v){ FILTROS[k] = v; render(); }
 function campoBusca(ph){
   return '<div class="campo busca"><label>Buscar</label><input id="fBusca" value="'+esc(FILTROS.busca||'')+'" placeholder="'+esc(ph||'')+'" oninput="FILTROS.busca=this.value;clearTimeout(window._b);window._b=setTimeout(()=>{render();const e=document.getElementById(\'fBusca\');if(e){e.focus();e.setSelectionRange(e.value.length,e.value.length)}},350)"></div>';
 }
+/* ── campos de filtro reutilizáveis ── */
+function filtroTexto(id, v){
+  FILTROS[id] = v;
+  clearTimeout(window._ft);
+  window._ft = setTimeout(() => {
+    render();
+    const e = document.getElementById(id);
+    if (e){ e.focus(); e.setSelectionRange(e.value.length, e.value.length); }
+  }, 350);
+}
+function campoTexto(id, rot, ph){
+  return '<div class="campo"><label for="'+id+'">'+esc(rot)+'</label>'
+    + '<input id="'+id+'" value="'+esc(FILTROS[id]||'')+'" placeholder="'+esc(ph||'')+'" '
+    + 'oninput="filtroTexto(\''+id+'\',this.value)"></div>';
+}
+function campoData(id, rot){
+  return '<div class="campo"><label for="'+id+'">'+esc(rot)+'</label>'
+    + '<input type="date" id="'+id+'" value="'+esc(FILTROS[id]||'')+'" onchange="setF(\''+id+'\',this.value)"></div>';
+}
+function campoValor(id, rot){
+  return '<div class="campo" style="min-width:110px"><label for="'+id+'">'+esc(rot)+'</label>'
+    + '<input id="'+id+'" value="'+esc(FILTROS[id]||'')+'" placeholder="0,00" onchange="setF(\''+id+'\',this.value)"></div>';
+}
+function botaoLimpar(ids){
+  return '<div class="campo" style="min-width:0"><label>&nbsp;</label>'
+    + '<button class="btn sec" onclick="limparFiltros([\''+ids.join("','")+'\'])">Limpar</button></div>';
+}
+function limparFiltros(ids){ ids.forEach(k => delete FILTROS[k]); render(); }
+const entreDatas = (d, de, ate) => (!de || String(d||'') >= de) && (!ate || String(d||'') <= ate);
+const entreValores = (v, min, max) => (!min || n(v) >= n(min)) && (!max || n(v) <= n(max));
+const contem = (txt, termo) => !termo || String(txt||'').toLowerCase().includes(String(termo).toLowerCase());
+
 function casa(obj, campos, termo){
   if (!termo) return true;
   const t = termo.toLowerCase();
@@ -1361,19 +1396,31 @@ function sugestoes(mov, ignorarData){
   });
   return res.sort((a,b) => b.score - a.score).slice(0,6);
 }
+let SUG_ABERTAS = new Set();
+function alternarSugestoes(id){
+  if (SUG_ABERTAS.has(id)) SUG_ABERTAS.delete(id); else SUG_ABERTAS.add(id);
+  render();
+}
 function boxSugestoes(mov, ignorarData, vazioTxt){
   const sg = sugestoes(mov, ignorarData);
   const deb = ehDebito(mov);
   if (!sg.length) return '<p class="mini">'
     + esc(vazioTxt || (deb ? 'Nenhuma conta a pagar em aberto compatível com este débito.'
                            : 'Sem correspondência em contas a receber.')) + '</p>';
-  return sg.map(x =>
-    '<div class="sug"><div class="info"><b>'+esc(x.c.titulo)+'</b> · '+moeda(x.c.valor)
-    + ' <span class="mini">'+esc(x.c.sub)+' · venc. '+dataBR(x.c.venc)+'</span>'
-    + '<div class="porq" title="'+esc(x.por.join('; '))+'">'+esc(x.c.detalhe)+(x.c.detalhe?' — ':'')+esc(x.por.join('; '))+'</div></div>'
-    + '<span class="score '+(x.score>=80?'alto':x.score<40?'baixo':'')+'">'+x.score+'</span>'
-    + '<button class="btn sm ok" onclick="conciliar(\''+mov.ID+'\',\''+x.c.id+'\')">'
-    + (deb ? 'Conciliar pagamento' : 'Conciliar') + '</button></div>').join('');
+  const abertas = SUG_ABERTAS.has(mov.ID);
+  const mostra = abertas ? sg : sg.slice(0, 3);
+  return mostra.map(x => {
+    const det = [x.c.sub, 'venc. ' + dataBR(x.c.venc), x.c.detalhe, x.por.join('; ')].filter(Boolean).join(' · ');
+    return '<div class="sug"><div class="info" title="'+esc(det)+'">'
+      + '<b>'+esc(x.c.titulo)+'</b><span class="num">'+moeda(x.c.valor)+'</span>'
+      + '<span class="det">'+esc(det)+'</span></div>'
+      + '<span class="score '+(x.score>=80?'alto':x.score<40?'baixo':'')+'">'+x.score+'</span>'
+      + '<button class="btn sm ok" onclick="conciliar(\''+mov.ID+'\',\''+x.c.id+'\')">Conciliar</button></div>';
+  }).join('')
+    + (sg.length > 3
+        ? '<button class="maisSug" onclick="alternarSugestoes(\''+mov.ID+'\')">'
+          + (abertas ? 'mostrar menos' : 'mais ' + (sg.length - 3) + ' sugestão(ões)') + '</button>'
+        : '');
 }
 
 function telaConciliacao(){
@@ -1444,9 +1491,8 @@ function listaPendentes(pend){
 }
 function ladoMovimento(m, extras){
   return '<div class="lado">'
-    + '<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">'
+    + '<div class="topo">'
     + '<span class="valor '+(ehDebito(m)?'neg':'pos')+'">'+moeda(m.VALOR)+'</span>'
-    + '<span class="tag '+(ehDebito(m)?'t-ni':'t-ok')+'">'+(ehDebito(m)?'Débito':'Crédito')+'</span>'
     + '<span class="mini">'+dataBR(m.DATA)+(m.BANCO?' · '+esc(m.BANCO):'')+'</span></div>'
     + '<div class="hist" title="'+esc(m.IDENTIFICACAO||'')+'">'+esc(m.IDENTIFICACAO||'—')+'</div>'
     + '<div class="acoes">'
@@ -2349,7 +2395,7 @@ function telaRecebidas(){
       + '<p class="mini" style="margin:-4px 0 12px">Ao lado de cada depósito, as pastas e contas em aberto com o mesmo valor — inclusive acordos lançados depois da data do crédito.</p>'
       + listaNaoIdentificados(naoId);
   }
-  const t = FILTROS.busca, mes = FILTROS.fMesX || '';
+
   let L = (DB.PARCELAS||[]).filter(p => p.STATUS === 'Recebida').map(p => {
     const l = lancDe(p.LANC_ID);
     return {id:p.ID, tipo:'parcela', pasta:l.PASTA, cliente:l.CLIENTE, proc:l.N_PROCESSO,
@@ -2361,8 +2407,10 @@ function telaRecebidas(){
             valor:n(c.VALOR), cli:n(c.VALOR_CLIENTE),
             esc:n(c.VALOR_ESCRITORIO) || n(c.VALOR), tar:n(c.TARIFA), lanc:''}));
 
-  L = L.filter(r => casa(r, ['pasta','cliente','proc','desc'], t))
-       .filter(r => !mes || mesDe(r.data) === mes)
+  L = L.filter(r => entreDatas(r.data, FILTROS.rcDe, FILTROS.rcAte))
+       .filter(r => contem((r.pasta||'') + ' ' + (r.cliente||''), FILTROS.rcQuem))
+       .filter(r => contem(r.desc, FILTROS.rcDesc))
+       .filter(r => entreValores(r.valor, FILTROS.rcMin, FILTROS.rcMax))
        .sort((a,b) => String(b.data).localeCompare(String(a.data)));
 
   return cabec('Contas recebidas', 'Créditos já conciliados. A tarifa sai da parte do cliente e entra na do escritório.',
@@ -2374,7 +2422,13 @@ function telaRecebidas(){
     + kpi('Receita do escritório', moeda(L.reduce((s,r)=>s+r.esc,0)), 'inclui as tarifas', 'd')
     + kpi('Tarifas bancárias', moeda(L.reduce((s,r)=>s+r.tar,0)), 'do cliente para o escritório', '')
     + '</div>'
-    + '<div class="filtros">' + campoBusca('Pasta, cliente, processo…') + selMes('fMesX', mes) + '</div>'
+    + '<div class="filtros">'
+    + campoData('rcDe','Crédito de') + campoData('rcAte','até')
+    + campoTexto('rcQuem','Pasta / cliente','buscar…')
+    + campoTexto('rcDesc','Descrição','buscar…')
+    + campoValor('rcMin','Valor de') + campoValor('rcMax','Valor até')
+    + botaoLimpar(['rcDe','rcAte','rcQuem','rcDesc','rcMin','rcMax'])
+    + '</div>'
     + '<div class="card"><div class="tw"><table><thead><tr><th>Crédito</th><th>Pasta / cliente</th><th>Descrição</th>'
     + '<th class="num">Valor</th><th class="num">Cliente</th><th class="num">Tarifa</th><th class="num">Escritório</th><th></th></tr></thead><tbody>'
     + (L.length ? L.map(r => '<tr><td>'+dataBR(r.data)+'</td>'
@@ -2598,13 +2652,15 @@ function origemCP(c){
   return partes.length ? '<div class="mini">'+esc(partes.join(' · '))+'</div>' : '';
 }
 function telaPagar(){
-  const t = FILTROS.busca, mes = FILTROS.fMesP || '';
   const hj = hoje();
   // contas pagas saem daqui e vão para a aba Contas pagas
   const base = (DB.CONTAS_PAGAR||[])
     .filter(c => c.STATUS !== 'Pago')
-    .filter(c => casa(c, ['DESCRICAO','FAVORECIDO','CATEGORIA'], t))
-    .filter(c => !mes || mesDe(c.VENCIMENTO) === mes);
+    .filter(c => entreDatas(c.VENCIMENTO, FILTROS.apDe, FILTROS.apAte))
+    .filter(c => contem(c.DESCRICAO, FILTROS.apDesc))
+    .filter(c => contem(c.FAVORECIDO, FILTROS.apFav))
+    .filter(c => !FILTROS.apCat || c.CATEGORIA === FILTROS.apCat)
+    .filter(c => entreValores(c.VALOR, FILTROS.apMin, FILTROS.apMax));
   const L = base.filter(c => filtraLib(c, FILTROS.fLib))
     .sort((a,b) => String(a.VENCIMENTO).localeCompare(String(b.VENCIMENTO)));
   const abertas = L;
@@ -2623,7 +2679,13 @@ function telaPagar(){
     + kpi('Aguardando recebimento', moeda(travadas.reduce((s,c)=>s+n(c.VALOR),0)), travadas.length + ' repasse(s) com ✕', travadas.length ? 'n' : '')
     + kpi('Boletos não recebidos', semBoleto.length, 'contas recorrentes ainda sem valor', semBoleto.length ? 'b' : '')
     + '</div>'
-    + '<div class="filtros">' + campoBusca('Descrição, favorecido…') + selMes('fMesP', mes)
+    + '<div class="filtros">'
+    + campoData('apDe','Vencimento de') + campoData('apAte','até')
+    + campoTexto('apDesc','Descrição','buscar…')
+    + campoTexto('apFav','Favorecido','buscar…')
+    + sel('apCat','Categoria', [['','Todas']].concat(categorias('D').map(c => [c,c])), FILTROS.apCat||'', '', 'onchange="setF(\'apCat\',this.value)"')
+    + campoValor('apMin','Valor de') + campoValor('apMax','Valor até')
+    + botaoLimpar(['apDe','apAte','apDesc','apFav','apCat','apMin','apMax'])
     + '</div>' + botoesLib(base)
     + '<div class="card"><div class="tw"><table><thead><tr><th style="text-align:center">Recebido</th><th>Vencimento</th><th>Descrição</th><th>Favorecido</th>'
     + '<th>Categoria</th><th class="num">Valor</th><th></th></tr></thead><tbody>'
@@ -3118,12 +3180,14 @@ function limparFiltrosCC(){
 
 /* ══════════════════ CONTAS PAGAS ══════════════════ */
 function telaPagas(){
-  const t = FILTROS.busca, mes = FILTROS.fMesPg || '', cat = FILTROS.fCatPg || '';
   const L = (DB.CONTAS_PAGAR||[])
     .filter(c => c.STATUS === 'Pago')
-    .filter(c => casa(c, ['DESCRICAO','FAVORECIDO','CATEGORIA','OBS'], t))
-    .filter(c => !mes || mesDe(c.DATA_PGTO) === mes)
-    .filter(c => !cat || c.CATEGORIA === cat)
+    .filter(c => entreDatas(c.DATA_PGTO, FILTROS.pgDe, FILTROS.pgAte))
+    .filter(c => entreDatas(c.VENCIMENTO, FILTROS.pgVde, FILTROS.pgVate))
+    .filter(c => contem(c.DESCRICAO, FILTROS.pgDesc))
+    .filter(c => contem(c.FAVORECIDO, FILTROS.pgFav))
+    .filter(c => !FILTROS.pgCat || c.CATEGORIA === FILTROS.pgCat)
+    .filter(c => entreValores(c.VALOR, FILTROS.pgMin, FILTROS.pgMax))
     .sort((a,b) => String(b.DATA_PGTO).localeCompare(String(a.DATA_PGTO)));
 
   const cats = [...new Set((DB.CONTAS_PAGAR||[]).filter(c => c.STATUS === 'Pago').map(c => c.CATEGORIA).filter(Boolean))].sort();
@@ -3139,9 +3203,14 @@ function telaPagas(){
     + kpi('Comissões', moeda(comissoes), 'pagas aos comissionados', 'd')
     + kpi('Despesas do escritório', moeda(rd(total - repasses - comissoes)), 'demais categorias', 'n')
     + '</div>'
-    + '<div class="filtros">' + campoBusca('Descrição, favorecido…')
-    + selMesPg(mes)
-    + sel('fCatPg','Categoria', [['','Todas']].concat(cats.map(c => [c,c])), cat, '', 'onchange="setF(\'fCatPg\',this.value)"')
+    + '<div class="filtros">'
+    + campoData('pgDe','Pagamento de') + campoData('pgAte','até')
+    + campoData('pgVde','Vencimento de') + campoData('pgVate','até')
+    + campoTexto('pgDesc','Descrição','buscar…')
+    + campoTexto('pgFav','Favorecido','buscar…')
+    + sel('pgCat','Categoria', [['','Todas']].concat(cats.map(c => [c,c])), FILTROS.pgCat||'', '', 'onchange="setF(\'pgCat\',this.value)"')
+    + campoValor('pgMin','Valor de') + campoValor('pgMax','Valor até')
+    + botaoLimpar(['pgDe','pgAte','pgVde','pgVate','pgDesc','pgFav','pgCat','pgMin','pgMax'])
     + '</div>'
     + '<div class="card"><div class="tw"><table><thead><tr><th>Pagamento</th><th>Vencimento</th><th>Descrição</th>'
     + '<th>Favorecido</th><th>Categoria</th><th class="num">Valor</th><th></th></tr></thead><tbody>'
@@ -3154,13 +3223,6 @@ function telaPagas(){
       + ' <button class="btn sm per" onclick="apagarSimples(\'CONTAS_PAGAR\',\''+c.ID+'\')">Excluir</button></td></tr>').join('')
       : '<tr><td colspan="7">'+vazio('Nenhuma conta paga','As contas aparecem aqui quando o débito correspondente é conciliado no extrato.')+'</td></tr>')
     + '</tbody></table></div></div>';
-}
-function selMesPg(valor){
-  const meses = new Set();
-  (DB.CONTAS_PAGAR||[]).filter(c => c.STATUS === 'Pago' && c.DATA_PGTO).forEach(c => meses.add(mesDe(c.DATA_PGTO)));
-  return '<div class="campo"><label>Mês do pagamento</label><select onchange="setF(\'fMesPg\',this.value)"><option value="">Todos</option>'
-    + [...meses].sort().reverse().map(m => '<option value="'+m+'"'+(valor===m?' selected':'')+'>'+mesBR(m)+'</option>').join('')
-    + '</select></div>';
 }
 function botaoDesfazerPago(c){
   const m = (DB.EXTRATO||[]).find(x => x.PARCELA_ID === c.ID && x.STATUS === 'Conciliado');
