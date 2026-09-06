@@ -1485,7 +1485,9 @@ function alvoDe(mov){
   if (cp) return {tipo:'pagar', cp, quem:'<b>'+esc(cp.FAVORECIDO||cp.DESCRICAO||'—')+'</b>'
             + '<div class="mini">'+esc(cp.CATEGORIA||'')+'</div>', cli:0, esc:0};
   const cr = (DB.CONTAS_RECEBER||[]).find(x => x.ID === id);
-  if (cr) return {tipo:'receber', cr, quem:'<b>'+esc(cr.CLIENTE||cr.DESCRICAO||'—')+'</b>', cli:0, esc:n(cr.VALOR)};
+  if (cr) return {tipo:'receber', cr,
+    quem: cr.PASTA ? pastaCliente(cr.PASTA, cr.CLIENTE) : '<b>'+esc(cr.CLIENTE||cr.DESCRICAO||'—')+'</b>',
+    cli:n(cr.VALOR_CLIENTE), esc:n(cr.VALOR_ESCRITORIO) || n(cr.VALOR)};
   return {tipo:'', quem:'<span class="mini">—</span>', cli:0, esc:0};
 }
 function listaConciliados(L){
@@ -1626,7 +1628,25 @@ async function conciliarRecebimento(m, cr){
       OBS:'Recebido pelo crédito conciliado em '+dataBR(m.DATA)})},
     {aba:'EXTRATO', registro: Object.assign({}, m, {STATUS:'Conciliado', PARCELA_ID:cr.ID})}
   ];
+  comissoesDoRecebimento(cr, valor, m.DATA).forEach(c => lote.push(c));
   try{ await salvarLoteRapido(lote); toast('Recebimento de '+moeda(valor)+' conciliado e salvo.','ok'); }catch(e){}
+}
+/* comissões do recebimento avulso: mesmas regras das parcelas — categoria, praça e o % próprio da EXEZ */
+function comissoesDoRecebimento(cr, valor, data){
+  const baseCom = rd((n(cr.VALOR_ESCRITORIO) || 0) - n(cr.TARIFA));
+  if (baseCom <= 0) return [];
+  return (DB.REGRAS_COMISSAO||[])
+    .filter(r => r.SUBCLASSE && r.SUBCLASSE === cr.CATEGORIA)
+    .filter(r => regraCobrePraca(r, cr.PRACA))
+    .map(r => {
+      const base = n(r.PCT_BASE) > 0 ? rd(n(valor) * n(r.PCT_BASE) / 100) : baseCom;
+      const pctAplicado = pctDaRegra(r, cr.EXEZ === 'SIM');
+      const v = rd(base * pctAplicado / 100);
+      if (v <= 0) return null;
+      return {aba:'COMISSOES', registro:{ ID:uid('co'), PARCELA_ID:cr.ID, LANC_ID:'', CLIENTE:cr.CLIENTE||'',
+        COMISSIONADO_ID:r.COMISSIONADO_ID, BASE:base, PCT:pctAplicado, VALOR:v,
+        STATUS:'A pagar', DATA:data, CP_ID:'' }};
+    }).filter(Boolean);
 }
 
 /* ── Desfazer ── */
@@ -1662,8 +1682,10 @@ async function desfazer(movId){
       lote.push({aba:'COMISSOES', registro: Object.assign({}, c, {STATUS:'Enviada'})}));
 
   } else if (a.tipo === 'receber'){
-    if (!confirm('Desfazer? A conta volta para contas a receber.')) return;
+    if (!confirm('Desfazer? A conta volta para contas a receber e as comissões geradas são removidas.')) return;
     lote.push({aba:'CONTAS_RECEBER', registro: Object.assign({}, a.cr, {STATUS:'Em aberto', DATA_RECEB:''})});
+    (DB.COMISSOES||[]).filter(c => c.PARCELA_ID === a.cr.ID && c.STATUS !== 'Paga')
+      .forEach(c => apagar.push({aba:'COMISSOES', id:c.ID}));
 
   } else if (!confirm('Este movimento não aponta para nenhum registro. Voltar para pendentes?')) return;
 
@@ -1729,6 +1751,13 @@ function formNovoNaConciliacao(movId){
     + sel('ncCat','Categoria', opcoesCategorias(deb ? 'D' : 'C', '', '— selecione —'), '', '', deb ? '' : 'onchange="montaRateio()"')
     + inp('ncVenc', deb ? 'Vencimento' : 'Previsão', m.DATA, '', 'date')
     + inp('ncValor','Valor (R$)', valor, '', 'text', deb ? '' : 'oninput="montaRateio()"')
+    + (deb ? '' :
+        inp('ncPasta','Pasta do cliente', '')
+      + sel('ncPraca','Praça', [['','— selecione —']].concat((DB.PRACAS||[]).filter(x => x.ATIVO !== 'NAO')
+          .map(x => [x.NOME, x.NOME + (x.UF ? ' / ' + x.UF : '')])), '')
+      + sel('ncFilial','Filial', [['','— selecione —']].concat((DB.FILIAIS||[]).filter(x => x.ATIVO !== 'NAO')
+          .map(x => [x.NOME, x.NOME])), '')
+      + '<div class="check"><input type="checkbox" id="ncExez"><label for="ncExez">Cálculo feito pela EXEZ</label></div>')
     + '<div class="campo full"><label for="ncObs">Observações</label><textarea id="ncObs" rows="2"></textarea></div>'
     + (deb ? '' : '<div class="full" id="boxRateio"></div><div class="full" id="boxRepasse" style="display:none"></div>')
     + '</div>'
@@ -1836,6 +1865,8 @@ async function gravarNovoNaConciliacao(movId){
         return toast('A soma do escritório com o cliente ('+moeda(rd(escBruto+cliBruto))+') tem que fechar com o valor do crédito ('+moeda(valor)+').','erro');
       if (esc < 0 || cli < 0) return toast('Com a tarifa, um dos lados ficou negativo. Revise os valores.','erro');
     }
+    const dadosCR = {DESCRICAO:tit(val('ncDesc')), CLIENTE:tit(val('ncQuem')), PASTA:tit(val('ncPasta')),
+      PRACA:val('ncPraca'), FILIAL:val('ncFilial'), EXEZ: val('ncExez') ? 'SIM' : 'NAO'};
     let cpId = '';
     if (cli > 0){
       const vRep = rd(n(val('rpValor'))) || cli;
@@ -1845,19 +1876,16 @@ async function gravarNovoNaConciliacao(movId){
       // o vínculo com o recebimento fica no CP_ID da conta a receber, gravada logo abaixo
       if (favRep) lote.push(favRep);
       lote.push({aba:'CONTAS_PAGAR', registro:{ID:cpId,
-        DESCRICAO: 'Repasse ao cliente — ' + tit(val('ncDesc')),
+        DESCRICAO: descricaoRepasse(dadosCR),
         FAVORECIDO:tit(val('rpFav')), CATEGORIA:val('rpCat') || 'Repasse a cliente', VENCIMENTO:val('rpVenc') || m.DATA,
         VALOR:vRep, STATUS:'Em aberto', DATA_PGTO:'', ORIGEM:'Repasse de recebimento', PARCELA_ID:id, ANEXO_URL:'',
         OBS: (val('rpObs') ? val('rpObs') + ' · ' : '')
-             + 'Crédito de ' + moeda(valor) + ' em ' + dataBR(m.DATA)
-             + ' · escritório ' + moeda(esc) + ' (' + pctSobre(esc, valor) + ')'
-             + ' · cliente ' + moeda(cli) + ' (' + pctSobre(cli, valor) + ')'
-             + (tar ? ' · tarifa de ' + moeda(tar) + ' deduzida do cliente e revertida ao escritório' : '')}});
+             + obsRepasse(dadosCR, valor, esc, cli, tar, m.DATA)}});
     }
-    lote.push({aba:'CONTAS_RECEBER', registro:{ID:id, DESCRICAO:tit(val('ncDesc')), CLIENTE:tit(val('ncQuem')),
+    lote.push({aba:'CONTAS_RECEBER', registro: Object.assign({}, dadosCR, {ID:id,
       CATEGORIA:val('ncCat'), VENCIMENTO:val('ncVenc'), VALOR:valor, STATUS:'Em aberto', DATA_RECEB:'',
       ORIGEM:'Lançado na conciliação', ANEXO_URL:'', OBS:val('ncObs'),
-      VALOR_ESCRITORIO:esc, VALOR_CLIENTE:cli, CP_ID:cpId, TARIFA:tar}});
+      VALOR_ESCRITORIO:esc, VALOR_CLIENTE:cli, CP_ID:cpId, TARIFA:tar})});
   }
 
   fecharModal();
@@ -2237,7 +2265,7 @@ function telaReceber(){
             esc:rd(n(p.VALOR)*n(l.PCT_ESCRITORIO)/100 + tarifaDe(p,l)), lanc:l.ID};
   });
   (DB.CONTAS_RECEBER||[]).filter(c => c.STATUS !== 'Recebido').forEach(c =>
-    L.push({id:c.ID, tipo:'avulso', pasta:'—', cliente:c.CLIENTE, proc:'', praca:'', desc:c.DESCRICAO,
+    L.push({id:c.ID, tipo:'avulso', pasta:c.PASTA || '—', cliente:c.CLIENTE, proc:'', praca:c.PRACA || '', desc:c.DESCRICAO,
             venc:c.VENCIMENTO, valor:n(c.VALOR), cli:n(c.VALOR_CLIENTE),
             esc:n(c.VALOR_ESCRITORIO) || n(c.VALOR), lanc:''}));
 
@@ -2335,7 +2363,7 @@ function telaRecebidas(){
             cli:n(p.VALOR_CLIENTE), esc:n(p.VALOR_ESCRITORIO), tar:n(p.TARIFA), lanc:l.ID};
   });
   (DB.CONTAS_RECEBER||[]).filter(c => c.STATUS === 'Recebido').forEach(c =>
-    L.push({id:c.ID, tipo:'avulso', pasta:'—', cliente:c.CLIENTE, proc:'', desc:c.DESCRICAO, data:c.DATA_RECEB,
+    L.push({id:c.ID, tipo:'avulso', pasta:c.PASTA || '—', cliente:c.CLIENTE, proc:c.PRACA || '', desc:c.DESCRICAO, data:c.DATA_RECEB,
             valor:n(c.VALOR), cli:n(c.VALOR_CLIENTE),
             esc:n(c.VALOR_ESCRITORIO) || n(c.VALOR), tar:n(c.TARIFA), lanc:''}));
 
@@ -2371,6 +2399,27 @@ function telaRecebidas(){
     + '</tbody></table></div></div>';
 }
 
+/* descrição e memória do repasse, sempre derivadas do recebimento de origem */
+function dadosDoRecebimento(cr){
+  const p = [];
+  if (cr.PASTA) p.push('pasta ' + cr.PASTA);
+  if (cr.PRACA) p.push('praça ' + cr.PRACA);
+  if (cr.FILIAL) p.push('filial ' + cr.FILIAL);
+  if (cr.EXEZ === 'SIM') p.push('cálculo pela EXEZ');
+  return p.join(' · ');
+}
+function descricaoRepasse(cr){
+  return 'Repasse ao cliente — ' + (cr.PASTA ? 'pasta ' + cr.PASTA + ' · ' : '') + (cr.DESCRICAO || '');
+}
+function obsRepasse(cr, total, esc2, cli2, tar, data){
+  const dados = dadosDoRecebimento(cr);
+  return (dados ? dados + ' · ' : '')
+    + 'crédito de ' + moeda(total) + ' em ' + dataBR(data)
+    + ' · escritório ' + moeda(esc2) + ' (' + pctSobre(rd(esc2 - tar), total) + ')'
+    + ' · cliente ' + moeda(cli2) + ' (' + pctSobre(rd(cli2 + tar), total) + ')'
+    + (tar ? ' · tarifa de ' + moeda(tar) + ' deduzida do cliente e revertida ao escritório' : '');
+}
+
 /* edição de um recebimento avulso já conciliado: dados e divisão com o cliente */
 function formRecebida(id){
   const c = (DB.CONTAS_RECEBER||[]).find(x => x.ID === id); if (!c) return;
@@ -2385,6 +2434,13 @@ function formRecebida(id){
     + inp('reDesc','Descrição', c.DESCRICAO, 'full')
     + inp('reCliente','Cliente', c.CLIENTE)
     + sel('reCat','Categoria (crédito)', opcoesCategorias('C', c.CATEGORIA, '— selecione —'), c.CATEGORIA)
+    + inp('rePasta','Pasta do cliente', c.PASTA)
+    + sel('rePraca','Praça', [['','— selecione —']].concat((DB.PRACAS||[]).filter(x => x.ATIVO !== 'NAO' || x.NOME === c.PRACA)
+        .map(x => [x.NOME, x.NOME + (x.UF ? ' / ' + x.UF : '')])), c.PRACA)
+    + sel('reFilial','Filial', [['','— selecione —']].concat((DB.FILIAIS||[]).filter(x => x.ATIVO !== 'NAO' || x.NOME === c.FILIAL)
+        .map(x => [x.NOME, x.NOME])), c.FILIAL)
+    + '<div class="check"><input type="checkbox" id="reExez"'+(c.EXEZ==='SIM'?' checked':'')+'>'
+      + '<label for="reExez">Cálculo feito pela EXEZ</label></div>'
     + '<div class="secao-form">Divisão do valor</div>'
     + inp('reEsc','Valor do escritório (R$)', nMoeda(esc0), '', 'text', 'oninput="sincronizaRecebida(\'esc\')"')
     + inp('reCli','Valor do cliente (R$)', nMoeda(cli0), '', 'text', 'oninput="sincronizaRecebida(\'cli\')"')
@@ -2435,22 +2491,42 @@ async function gravarRecebida(id, total){
 
   const lote = [], apagar = [];
   let cpId = c.CP_ID || '';
-  if (cli2 > 0){
-    if (!cpId) cpId = uid('cp');
-    lote.push({aba:'CONTAS_PAGAR', registro: Object.assign({}, cp || {}, {
-      ID:cpId, DESCRICAO:'Repasse ao cliente — ' + tit(val('reDesc')), FAVORECIDO:tit(val('reCliente')),
-      CATEGORIA:(cp && cp.CATEGORIA) || 'Repasse a cliente', VENCIMENTO:(cp && cp.VENCIMENTO) || c.DATA_RECEB,
-      VALOR:cli2, STATUS:(cp && cp.STATUS) || 'Em aberto', DATA_PGTO:(cp && cp.DATA_PGTO) || '',
-      ORIGEM:'Repasse de recebimento', PARCELA_ID:c.ID, ANEXO_URL:'',
-      OBS:'Crédito de '+moeda(total)+' em '+dataBR(c.DATA_RECEB)+' · escritório '+moeda(esc2)
-          +' ('+pctSobre(esc2,total)+') · cliente '+moeda(cli2)+' ('+pctSobre(cli2,total)+')'})});
-  } else if (cp && cp.STATUS !== 'Pago'){
+  if (cli2 > 0 && !cpId) cpId = uid('cp');
+  if (cli2 <= 0 && cp && cp.STATUS !== 'Pago'){
     apagar.push({aba:'CONTAS_PAGAR', id:cp.ID});
     cpId = '';
   }
-  lote.push({aba:'CONTAS_RECEBER', registro: Object.assign({}, c, {
+  const atualizado = Object.assign({}, c, {
     DESCRICAO:tit(val('reDesc')), CLIENTE:tit(val('reCliente')), CATEGORIA:val('reCat'),
-    VALOR_ESCRITORIO:esc2, VALOR_CLIENTE:cli2, CP_ID:cpId, TARIFA:tar, OBS:val('reObs')})});
+    PASTA:tit(val('rePasta')), PRACA:val('rePraca'), FILIAL:val('reFilial'),
+    EXEZ: val('reExez') ? 'SIM' : 'NAO',
+    VALOR_ESCRITORIO:esc2, VALOR_CLIENTE:cli2, CP_ID:cpId, TARIFA:tar, OBS:val('reObs')});
+  lote.push({aba:'CONTAS_RECEBER', registro: atualizado});
+
+  // o repasse acompanha o recebimento: pasta, cliente, descrição, valor e memória de cálculo
+  if (cli2 > 0){
+    const fav = garantirFavorecido(atualizado.CLIENTE, (cp && cp.CATEGORIA) || 'Repasse a cliente');
+    if (fav) lote.push(fav);
+    lote.push({aba:'CONTAS_PAGAR', registro: Object.assign({}, cp || {}, {
+      ID:cpId, DESCRICAO:descricaoRepasse(atualizado), FAVORECIDO:atualizado.CLIENTE,
+      CATEGORIA:(cp && cp.CATEGORIA) || 'Repasse a cliente', VENCIMENTO:(cp && cp.VENCIMENTO) || c.DATA_RECEB,
+      VALOR:cli2, STATUS:(cp && cp.STATUS) || 'Em aberto', DATA_PGTO:(cp && cp.DATA_PGTO) || '',
+      ORIGEM:'Repasse de recebimento', PARCELA_ID:c.ID, ANEXO_URL:(cp && cp.ANEXO_URL) || '',
+      OBS:obsRepasse(atualizado, total, esc2, cli2, tar, c.DATA_RECEB)})});
+  }
+
+  // a divisão e a praça mudam a comissão: refaz as que ainda não foram pagas
+  if (c.STATUS === 'Recebido'){
+    (DB.COMISSOES||[]).filter(x => x.PARCELA_ID === c.ID).forEach(x => {
+      if (x.STATUS === 'Paga') return;
+      apagar.push({aba:'COMISSOES', id:x.ID});
+    });
+    const jaPagas = (DB.COMISSOES||[]).filter(x => x.PARCELA_ID === c.ID && x.STATUS === 'Paga')
+      .map(x => x.COMISSIONADO_ID);
+    comissoesDoRecebimento(atualizado, total, c.DATA_RECEB)
+      .filter(it => jaPagas.indexOf(it.registro.COMISSIONADO_ID) < 0)
+      .forEach(it => lote.push(it));
+  }
 
   fecharModal();
   try{
@@ -2683,7 +2759,16 @@ function telaComissoes(){
             caiu:n(p.VALOR_CREDITADO||p.VALOR), esc:n(p.VALOR_ESCRITORIO),
             base:rd(n(p.VALOR_ESCRITORIO) - n(p.TARIFA)),
             itens:(DB.COMISSOES||[]).filter(c => c.PARCELA_ID === p.ID)};
-  }).filter(r => !mes || mesDe(r.data) === mes)
+  });
+  // recebimentos avulsos conciliados também geram comissão
+  (DB.CONTAS_RECEBER||[]).filter(c => c.STATUS === 'Recebido').forEach(c => {
+    const esc2 = n(c.VALOR_ESCRITORIO) || n(c.VALOR);
+    recs.push({p:null, l:{}, data:c.DATA_RECEB, cliente:c.CLIENTE || c.DESCRICAO || '—',
+      pasta:c.PASTA || '—', sub:(c.CATEGORIA||'—') + (c.EXEZ === 'SIM' ? ' · EXEZ' : ''),
+      caiu:n(c.VALOR), esc:esc2, base:rd(esc2 - n(c.TARIFA)),
+      itens:(DB.COMISSOES||[]).filter(x => x.PARCELA_ID === c.ID)});
+  });
+  recs = recs.filter(r => !mes || mesDe(r.data) === mes)
     .filter(r => casa(r, ['cliente','pasta','sub'], t))
     .sort((a,b) => String(b.data).localeCompare(String(a.data)));
 
