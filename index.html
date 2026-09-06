@@ -101,6 +101,11 @@ th{text-align:left;font-weight:600;font-size:11px;letter-spacing:.04em;color:var
 td{padding:8px 10px;border-bottom:1px solid var(--line2);vertical-align:top}
 tbody tr:hover{background:var(--surface2)}
 tr.grifo{background:var(--brass-l)}
+td.abrir{cursor:pointer}
+tr:hover td.abrir{color:var(--brand-d)}
+.lupa{color:var(--ink3);font-weight:700}
+tr:hover .lupa{color:var(--brand)}
+table.dre tr:has(td.abrir):hover td{background:var(--brand-l)}
 .barraSel{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--brand-l);border:1px solid var(--brand);
   border-radius:var(--r);padding:9px 14px;margin-bottom:14px;font-size:13px;color:var(--brand-d)}
 tr.sel{background:var(--brand-l)}
@@ -538,9 +543,13 @@ function tabelaSimples(cols, linhas){
 function cfgFavorecidos(){
   const L = (DB.FAVORECIDOS||[]).slice().sort((a,b) => String(a.NOME).localeCompare(String(b.NOME),'pt-BR'));
   const linhas = L.length ? L.map(f => {
-    const contas = (DB.CONTAS_PAGAR||[]).filter(c => c.FAVORECIDO === f.NOME).length;
+    const contas = (DB.CONTAS_PAGAR||[]).filter(c => c.FAVORECIDO === f.NOME);
+    const emAberto = contas.filter(c => c.STATUS !== 'Pago').length;
     return '<tr><td><b>'+esc(f.NOME)+'</b></td><td>'+esc(f.DOC||'—')+'</td><td>'+esc(f.CATEGORIA||'—')+'</td>'
-      + '<td class="num">'+contas+'</td>'
+      + '<td class="num">' + (contas.length
+          ? '<button class="btn sm sec" title="Ver os lançamentos deste favorecido" onclick="contasDoFavorecido(\''+esc(f.NOME).replace(/'/g,"\\'")+'\')">'
+            + contas.length + (emAberto ? ' <span class="mini">('+emAberto+' em aberto)</span>' : '') + '</button>'
+          : '<span class="mini">0</span>') + '</td>'
       + '<td><span class="tag '+(f.ATIVO==='NAO'?'t-neutro':'t-ok')+'">'+(f.ATIVO==='NAO'?'Inativo':'Ativo')+'</span></td>'
       + '<td style="text-align:right;white-space:nowrap"><button class="btn sm sec" onclick="formFavorecido(\''+f.ID+'\')">Editar</button> '
       + '<button class="btn sm per" onclick="apagarReg(\'FAVORECIDOS\',\''+f.ID+'\',\''+esc(f.NOME)+'\',\'favorecidos\')">Excluir</button></td></tr>';
@@ -548,6 +557,33 @@ function cfgFavorecidos(){
     : '<tr><td colspan="6" class="vazio">Nenhum favorecido. Eles aparecem como sugestão enquanto você digita o nome em contas a pagar.</td></tr>';
   return '<div style="display:flex;margin-bottom:12px"><button class="btn" onclick="formFavorecido()">Novo favorecido</button></div>'
     + tabelaSimples([{t:'Nome'},{t:'CPF / CNPJ'},{t:'Categoria padrão'},{t:'Contas',num:1},{t:'Situação'},{t:''}], linhas);
+}
+/* todos os lançamentos de um favorecido */
+function contasDoFavorecido(nome){
+  const L = (DB.CONTAS_PAGAR||[]).filter(c => c.FAVORECIDO === nome)
+    .sort((a,b) => String(b.VENCIMENTO).localeCompare(String(a.VENCIMENTO)));
+  const pagas = L.filter(c => c.STATUS === 'Pago');
+  const abertas = L.filter(c => c.STATUS !== 'Pago');
+  const soma = arr => arr.reduce((s,c) => s + n(c.VALOR), 0);
+  const corpo = '<div class="kpis" style="margin-bottom:14px">'
+    + kpi('Em aberto', moeda(soma(abertas)), abertas.length + ' conta(s)', 'b')
+    + kpi('Já pago', moeda(soma(pagas)), pagas.length + ' baixada(s)', 'p')
+    + kpi('Total lançado', moeda(soma(L)), L.length + ' conta(s)', 'd')
+    + '</div>'
+    + (L.length
+      ? '<div class="tw"><table class="densa"><thead><tr><th>Vencimento</th><th>Descrição</th><th>Categoria</th>'
+        + '<th>Situação</th><th class="num">Valor</th></tr></thead><tbody>'
+        + L.map(c => '<tr><td>'+dataBR(c.VENCIMENTO)+'</td>'
+          + '<td'+(c.OBS?' title="'+esc(c.OBS)+'"':'')+'>'+esc(c.DESCRICAO||'—')
+          + (c.ORIGEM && c.ORIGEM !== 'Manual' ? '<div class="mini">'+esc(c.ORIGEM)+'</div>' : '')+'</td>'
+          + '<td>'+esc(c.CATEGORIA||'—')+'</td>'
+          + '<td><span class="tag '+(c.STATUS==='Pago'?'t-ok':'t-pend')+'">'+esc(c.STATUS)
+            + (c.DATA_PGTO ? ' ' + dataBR(c.DATA_PGTO) : '')+'</span></td>'
+          + '<td class="num">'+(semValorCP(c) ? '<span class="tag t-pend">sem boleto</span>' : nMoeda(c.VALOR))+'</td></tr>').join('')
+        + '</tbody></table></div>'
+      : vazio('Nenhum lançamento','Este favorecido ainda não tem contas registradas.'));
+  modal('Lançamentos de ' + nome, corpo,
+    '<button class="btn sec" onclick="abrirConfig(\'favorecidos\')">Voltar aos favorecidos</button>', 'larga');
 }
 function formFavorecido(id){
   const f = (DB.FAVORECIDOS||[]).find(x => x.ID === id) || {};
@@ -2562,7 +2598,12 @@ function telaPainel(){
   const cpAberto = (DB.CONTAS_PAGAR||[]).filter(c => c.STATUS !== 'Pago').reduce((s,c) => s + n(c.VALOR), 0);
   const pendConc = (DB.EXTRATO||[]).filter(m => m.STATUS !== 'Conciliado').length;
 
-  const li = (rot, v, cls) => '<tr class="'+(cls||'')+'"><td>'+esc(rot)+'</td><td class="num'+(n(v)<0?' neg':'')+'">'+nMoeda(v)+'</td></tr>';
+  const li = (rot, v, cls, drill) => {
+    const abre = drill ? ' class="abrir" onclick="detalheDRE(\''+esc(drill).replace(/'/g,"\\'")+'\')" title="Ver as contas desta linha"' : '';
+    return '<tr class="'+(cls||'')+'"'+(drill?' style="cursor:pointer"':'')
+      + '><td'+abre+'>'+esc(rot)+(drill?' <span class="lupa">›</span>':'')+'</td>'
+      + '<td class="num'+(n(v)<0?' neg':'')+'"'+abre+'>'+nMoeda(v)+'</td></tr>';
+  };
 
   return cabec('Painel e DRE', 'Resultado por regime de caixa. Repasses aos clientes são recursos de terceiros e ficam fora do resultado.',
       '<button class="btn sec" onclick="exportarCSV(\'dre\')">Exportar CSV</button>')
@@ -2582,18 +2623,19 @@ function telaPainel(){
     + '<div class="card"><h3>Demonstração do resultado — '+(mes ? mesBR(mes) : 'todo o período')+'</h3><div class="tw">'
     + '<table class="dre"><tbody>'
     + li('Receita bruta', bruta, 'nivel1')
-    + li('Honorários contratuais (parte do escritório)', hon, 'recuo')
-    + li('Honorários de sucumbência', suc, 'recuo')
-    + li('Tarifas bancárias repassadas ao escritório', tarifas, 'recuo')
-    + li('Outras receitas', outras, 'recuo')
-    + li('Despesas operacionais', -totDesp, 'nivel1')
-    + Object.keys(desp).sort().map(k => li(k, -desp[k], 'recuo')).join('')
+    + li('Honorários contratuais (parte do escritório)', hon, 'recuo', 'honorarios')
+    + li('Honorários de sucumbência', suc, 'recuo', 'sucumbencia')
+    + li('Tarifas bancárias repassadas ao escritório', tarifas, 'recuo', 'tarifas')
+    + li('Outras receitas', outras, 'recuo', 'outras')
+    + li('Despesas operacionais', -totDesp, 'nivel1', 'despesas')
+    + Object.keys(desp).sort().map(k => li(k, -desp[k], 'recuo', 'despesa|'+k)).join('')
     + li('Resultado do período', resultado, 'total')
     + '</tbody></table></div>'
     + '<div class="corpo" style="border-top:1px solid var(--line2)">'
     + '<h3 style="border:0;padding:0 0 8px;font-size:12px;color:var(--ink2)">Contas de terceiros (fora do resultado)</h3>'
-    + '<table class="dre"><tbody>' + li('Repasses devidos aos clientes no período', repasses)
+    + '<table class="dre"><tbody>' + li('Repasses devidos aos clientes no período', repasses, '', 'repasses')
     + '</tbody></table></div></div>'
+    + '<p class="mini" style="margin:-6px 0 14px">Clique em qualquer linha do DRE para ver as contas que formam o total.</p>'
     + graficoMeses();
 }
 function graficoMeses(){
@@ -2609,6 +2651,76 @@ function graficoMeses(){
       + '<span>'+mesBR(k)+'</span><span class="num">'+moeda(meses[k])+'</span></div>'
       + '<div class="barra"><i style="width:'+Math.round(meses[k]/max*100)+'%"></i></div></div>').join('')
     + '</div></div>';
+}
+
+/* ── Detalhe de uma linha do DRE ── */
+function detalheDRE(chave){
+  const mes = FILTROS.fMesD || mesDe(hoje());
+  const noMes = d => !mes || mesDe(d) === mes;
+  const partes = String(chave).split('|');
+  const tipo = partes[0], cat = partes[1] || '';
+  let titulo = '', cols = [], linhas = [], total = 0;
+
+  const recb = (DB.PARCELAS||[]).filter(p => p.STATUS === 'Recebida' && noMes(p.DATA_CREDITO));
+  const crRec = (DB.CONTAS_RECEBER||[]).filter(c => c.STATUS === 'Recebido' && noMes(c.DATA_RECEB));
+
+  if (tipo === 'honorarios' || tipo === 'sucumbencia' || tipo === 'tarifas'){
+    const base = tipo === 'sucumbencia' ? recb.filter(p => p.TIPO === 'Sucumbência')
+               : tipo === 'tarifas' ? recb.filter(p => n(p.TARIFA) > 0)
+               : recb.filter(p => p.TIPO !== 'Sucumbência');
+    titulo = tipo === 'sucumbencia' ? 'Honorários de sucumbência'
+           : tipo === 'tarifas' ? 'Tarifas bancárias revertidas ao escritório' : 'Honorários contratuais';
+    cols = ['Crédito','Pasta / cliente','Descrição','Valor recebido','Entrou no resultado'];
+    linhas = base.map(p => { const l = lancDe(p.LANC_ID);
+      const v = tipo === 'tarifas' ? n(p.TARIFA)
+              : tipo === 'sucumbencia' ? n(p.VALOR_ESCRITORIO)
+              : rd(n(p.VALOR_ESCRITORIO) - n(p.TARIFA));
+      total += v;
+      return [dataBR(p.DATA_CREDITO), pastaCliente(l.PASTA, l.CLIENTE),
+              esc(p.TIPO + (p.NUM>0 ? ' ' + p.NUM : '')), nMoeda(p.VALOR_CREDITADO||p.VALOR), nMoeda(v)]; });
+
+  } else if (tipo === 'outras'){
+    titulo = 'Outras receitas';
+    cols = ['Recebido em','Cliente','Descrição','Valor do crédito','Parte do escritório'];
+    linhas = crRec.map(c => { const v = n(c.VALOR_ESCRITORIO) || n(c.VALOR); total += v;
+      return [dataBR(c.DATA_RECEB), esc(c.CLIENTE||'—'), esc(c.DESCRICAO||'—'), nMoeda(c.VALOR), nMoeda(v)]; });
+
+  } else if (tipo === 'repasses'){
+    titulo = 'Repasses devidos aos clientes';
+    cols = ['Data','Cliente','Origem','Valor do crédito','Parte do cliente'];
+    linhas = recb.filter(p => n(p.VALOR_CLIENTE) > 0).map(p => { const l = lancDe(p.LANC_ID);
+      total += n(p.VALOR_CLIENTE);
+      return [dataBR(p.DATA_CREDITO), esc(l.CLIENTE||'—'), 'Pasta ' + esc(l.PASTA||'—'),
+              nMoeda(p.VALOR_CREDITADO||p.VALOR), nMoeda(p.VALOR_CLIENTE)]; })
+      .concat(crRec.filter(c => n(c.VALOR_CLIENTE) > 0).map(c => { total += n(c.VALOR_CLIENTE);
+        return [dataBR(c.DATA_RECEB), esc(c.CLIENTE||'—'), esc(c.DESCRICAO||'—'), nMoeda(c.VALOR), nMoeda(c.VALOR_CLIENTE)]; }));
+
+  } else {
+    const contas = (DB.CONTAS_PAGAR||[])
+      .filter(c => c.CATEGORIA !== 'Repasse a cliente' && noMes(c.VENCIMENTO))
+      .filter(c => tipo === 'despesas' || c.CATEGORIA === cat || (!c.CATEGORIA && cat === 'Outras despesas'))
+      .sort((a,b) => String(a.VENCIMENTO).localeCompare(String(b.VENCIMENTO)));
+    titulo = tipo === 'despesas' ? 'Despesas operacionais' : 'Despesas — ' + cat;
+    cols = ['Vencimento','Descrição','Favorecido','Categoria','Situação','Valor'];
+    linhas = contas.map(c => { total += n(c.VALOR);
+      return [dataBR(c.VENCIMENTO), esc(c.DESCRICAO||'—'), esc(c.FAVORECIDO||'—'), esc(c.CATEGORIA||'—'),
+              '<span class="tag '+(c.STATUS==='Pago'?'t-ok':'t-pend')+'">'+esc(c.STATUS)
+              + (c.DATA_PGTO ? ' ' + dataBR(c.DATA_PGTO) : '')+'</span>', nMoeda(c.VALOR)]; });
+  }
+
+  modal(titulo + ' — ' + (mes ? mesBR(mes) : 'todo o período'),
+    tabelaDetalhe(cols, linhas, total),
+    '<button class="btn sec" onclick="fecharModal()">Fechar</button>', 'larga');
+}
+function tabelaDetalhe(cols, linhas, total){
+  if (!linhas.length) return vazio('Nada neste período','Nenhum lançamento compõe este total.');
+  const ultima = cols.length - 1;
+  return '<div class="tw"><table class="densa"><thead><tr>'
+    + cols.map((c,i) => '<th'+(i===ultima?' class="num"':'')+'>'+esc(c)+'</th>').join('')
+    + '</tr></thead><tbody>'
+    + linhas.map(l => '<tr>' + l.map((v,i) => '<td'+(i===ultima?' class="num"':'')+'>'+v+'</td>').join('') + '</tr>').join('')
+    + '</tbody><tfoot><tr><th colspan="'+ultima+'" style="text-align:right">Total — '+linhas.length+' lançamento(s)</th>'
+    + '<th class="num">'+nMoeda(total)+'</th></tr></tfoot></table></div>';
 }
 
 /* ══════════════════ EXPORTAÇÃO ══════════════════ */
