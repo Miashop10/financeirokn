@@ -101,6 +101,25 @@ th{text-align:left;font-weight:600;font-size:11px;letter-spacing:.04em;color:var
 td{padding:8px 10px;border-bottom:1px solid var(--line2);vertical-align:top}
 tbody tr:hover{background:var(--surface2)}
 tr.grifo{background:var(--brass-l)}
+.seg{display:inline-flex;flex-wrap:wrap;gap:0;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:var(--surface);margin-bottom:14px}
+.seg button{background:none;border:0;border-right:1px solid var(--line);padding:8px 14px;font-size:13px;color:var(--ink2);display:flex;align-items:center;gap:7px}
+.seg button:last-child{border-right:0}
+.seg button:hover{background:var(--surface2);color:var(--ink)}
+.seg button span{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;background:var(--line2);color:var(--ink2);border-radius:9px;padding:1px 6px}
+.seg button.on{background:var(--brand-l);color:var(--brand-d);font-weight:600}
+.seg button.on span{background:var(--brand);color:#fff}
+.seg button.kok.on{background:var(--pos-l);color:var(--pos)}
+.seg button.kok.on span{background:var(--pos)}
+.seg button.knao.on{background:var(--neg-l);color:var(--neg)}
+.seg button.knao.on span{background:var(--neg)}
+.seg button.ksem.on{background:var(--brass-l);color:var(--brass)}
+.seg button.ksem.on span{background:var(--brass)}
+table.densa th{padding:5px 8px}
+table.densa td{padding:3px 8px;font-size:12.5px;line-height:1.3;white-space:nowrap}
+table.densa td div.mini{display:inline;margin-left:6px}
+table.densa td b{font-weight:600}
+table.densa .tag{padding:1px 6px;font-size:10.5px}
+table.densa .btn.sm{padding:2px 8px;font-size:11px}
 .vazio{padding:34px 16px;text-align:center;color:var(--ink3);font-size:13px}
 .vazio strong{display:block;color:var(--ink2);font-size:14px;margin-bottom:3px}
 
@@ -474,7 +493,7 @@ const tarifaPadrao = () => n(cfg('TARIFA_PADRAO','2,50')) || 2.5;
 let CFGABA = 'filiais';
 function abrirConfig(aba){
   CFGABA = aba || CFGABA;
-  const abas = [['contas','Contas bancárias'],['favorecidos','Favorecidos'],['filiais','Filiais'],['pracas','Praças'],['subclasses','Subclasses'],['usuarios','Usuários'],
+  const abas = [['contas','Contas bancárias'],['favorecidos','Favorecidos'],['filiais','Filiais'],['pracas','Praças'],['subclasses','Categorias'],['usuarios','Usuários'],
                 ['comissionados','Comissionados'],['regras','Regras de comissão'],['geral','Geral']];
   const menu = '<div class="subtabs">' + abas.map(([k,t]) =>
     '<button class="'+(CFGABA===k?'on':'')+'" onclick="abrirConfig(\''+k+'\')">'+t+'</button>').join('') + '</div>';
@@ -506,7 +525,7 @@ function formFavorecido(id){
   const f = (DB.FAVORECIDOS||[]).find(x => x.ID === id) || {};
   modal(id ? 'Editar favorecido' : 'Novo favorecido',
     '<div class="grade">' + inp('fvNome','Nome', f.NOME, 'full') + inp('fvDoc','CPF / CNPJ', f.DOC)
-    + sel('fvCat','Categoria padrão', [['','— nenhuma —']].concat(CATEGORIAS_CP.map(c => [c,c])), f.CATEGORIA)
+    + sel('fvCat','Categoria padrão', opcoesCategorias('D', f.CATEGORIA, '— nenhuma —'), f.CATEGORIA)
     + '<div class="campo"><label>Situação</label><select id="fvAtivo"><option value="SIM">Ativo</option><option value="NAO"'+(f.ATIVO==='NAO'?' selected':'')+'>Inativo</option></select></div></div>'
     + '<p class="mini" style="margin-top:8px">A categoria padrão é sugerida automaticamente ao escolher este favorecido numa nova conta.</p>',
     '<button class="btn sec" onclick="abrirConfig(\'favorecidos\')">Cancelar</button><button class="btn" onclick="gravarFavorecido(\''+(id||'')+'\',\''+esc(f.NOME||'')+'\')">Salvar favorecido</button>', 'estreita');
@@ -543,8 +562,6 @@ function optsFavorecidos(){
     .slice().sort((a,b) => String(a.NOME).localeCompare(String(b.NOME),'pt-BR'))
     .map(f => '<option value="'+esc(f.NOME)+'">'+(f.DOC ? esc(f.DOC) : '')+'</option>').join('');
 }
-const CATEGORIAS_CP = ['Repasse a cliente','Comissão','Aluguel','Folha','Impostos','Custas processuais',
-                       'Software','Serviços','Telefonia','Contabilidade','Outras despesas'];
 
 /* Contas bancárias */
 function cfgContas(){
@@ -666,38 +683,66 @@ async function gravarUsuario(id){
   abrirConfig('usuarios');
 }
 
-/* Subclasses */
+/* Categorias (crédito e débito) */
+const ehDebitoCat = c => String((c && c.TIPO) || '').trim().toLowerCase().charAt(0) === 'd';
+function categorias(tipo){
+  return (DB.SUBCLASSES||[])
+    .filter(c => tipo === 'D' ? ehDebitoCat(c) : !ehDebitoCat(c))
+    .map(c => c.NOME)
+    .sort((a,b) => String(a).localeCompare(String(b),'pt-BR'));
+}
+/* lista para um <select>, preservando um valor gravado que já saiu do cadastro */
+function opcoesCategorias(tipo, atual, vazio){
+  const out = (vazio ? [['', vazio]] : []).concat(categorias(tipo).map(nome => [nome, nome]));
+  if (atual && !out.some(o => o[0] === atual)) out.push([atual, atual + ' (fora do cadastro)']);
+  return out;
+}
 function cfgSubclasses(){
-  const L = (DB.SUBCLASSES||[]);
+  const L = (DB.SUBCLASSES||[]).slice().sort((a,b) =>
+    (ehDebitoCat(a) - ehDebitoCat(b)) || String(a.NOME).localeCompare(String(b.NOME),'pt-BR'));
   const linhas = L.length ? L.map(s =>
-    '<tr><td><b>'+esc(s.NOME)+'</b></td><td style="text-align:right;white-space:nowrap">'
+    '<tr><td><b>'+esc(s.NOME)+'</b></td>'
+    + '<td><span class="tag '+(ehDebitoCat(s)?'t-ni':'t-ok')+'">'+(ehDebitoCat(s)?'Débito':'Crédito')+'</span></td>'
+    + '<td style="text-align:right;white-space:nowrap">'
     + '<button class="btn sm sec" onclick="formSubclasse(\''+s.ID+'\')">Editar</button> '
     + '<button class="btn sm per" onclick="apagarReg(\'SUBCLASSES\',\''+s.ID+'\',\''+esc(s.NOME)+'\',\'subclasses\')">Excluir</button></td></tr>').join('')
-    : '<tr><td colspan="2" class="vazio">Nenhuma subclasse. As subclasses classificam os lançamentos e definem quais geram comissão.</td></tr>';
-  return '<div style="display:flex;gap:8px;margin-bottom:12px;align-items:flex-end">'
-    + '<div class="campo" style="flex:1;margin:0"><label>Nova subclasse</label><input id="novaSub" placeholder="Ex.: Acordo trabalhista"></div>'
+    : '<tr><td colspan="3" class="vazio">Nenhuma categoria cadastrada.</td></tr>';
+  return '<div style="display:flex;gap:8px;margin-bottom:8px;align-items:flex-end;flex-wrap:wrap">'
+    + '<div class="campo" style="flex:1;min-width:180px;margin:0"><label>Nova categoria</label><input id="novaSub" placeholder="Ex.: Acordo trabalhista"></div>'
+    + '<div class="campo" style="margin:0"><label>Tipo</label><select id="novaSubTipo"><option value="Crédito">Crédito</option><option value="Débito">Débito</option></select></div>'
     + '<button class="btn" onclick="addSubclasse()">Adicionar</button></div>'
-    + tabelaSimples([{t:'Subclasse'},{t:''}], linhas);
+    + '<p class="mini" style="margin-bottom:12px">As de <b>crédito</b> aparecem nos lançamentos, nos recebimentos e nas regras de comissão. '
+    + 'As de <b>débito</b> aparecem ao lançar uma conta a pagar.</p>'
+    + tabelaSimples([{t:'Categoria'},{t:'Tipo'},{t:''}], linhas);
 }
 async function addSubclasse(){
-  const nome = val('novaSub'); if (!nome) return toast('Informe o nome da subclasse.','erro');
-  await salvar('SUBCLASSES', {ID:'', NOME:nome}); abrirConfig('subclasses');
+  const nome = val('novaSub'); if (!nome) return toast('Informe o nome da categoria.','erro');
+  if ((DB.SUBCLASSES||[]).some(c => c.NOME.toLowerCase() === nome.toLowerCase()))
+    return toast('Já existe uma categoria com esse nome.','erro');
+  await salvar('SUBCLASSES', {ID:'', NOME:nome, TIPO:val('novaSubTipo')}); abrirConfig('subclasses');
 }
 function formSubclasse(id){
   const s = (DB.SUBCLASSES||[]).find(x => x.ID === id) || {};
-  modal('Editar subclasse', '<div class="grade">' + inp('sbNome','Nome da subclasse', s.NOME, 'full') + '</div>'
-    + '<p class="mini" style="margin-top:8px">Ao renomear, as regras de comissão desta subclasse são atualizadas junto.</p>',
+  modal('Editar categoria', '<div class="grade">' + inp('sbNome','Nome da categoria', s.NOME, 'full')
+    + '<div class="campo"><label for="sbTipo">Tipo</label><select id="sbTipo">'
+      + '<option value="Crédito"'+(ehDebitoCat(s)?'':' selected')+'>Crédito — entradas</option>'
+      + '<option value="Débito"'+(ehDebitoCat(s)?' selected':'')+'>Débito — saídas</option></select></div></div>'
+    + '<p class="mini" style="margin-top:8px">Ao renomear, os lançamentos, as contas e as regras de comissão que usam esta categoria são atualizados junto.</p>',
     '<button class="btn sec" onclick="abrirConfig(\'subclasses\')">Cancelar</button><button class="btn" onclick="gravarSubclasse(\''+id+'\',\''+esc(s.NOME)+'\')">Salvar</button>', 'estreita');
 }
 async function gravarSubclasse(id, antigo){
-  const nome = val('sbNome'); if (!nome) return toast('Informe o nome da subclasse.','erro');
-  const lote = [{aba:'SUBCLASSES', registro:{ID:id, NOME:nome}}];
+  const nome = val('sbNome'); if (!nome) return toast('Informe o nome da categoria.','erro');
+  const lote = [{aba:'SUBCLASSES', registro:{ID:id, NOME:nome, TIPO:val('sbTipo')}}];
   (DB.REGRAS_COMISSAO||[]).filter(r => r.SUBCLASSE === antigo).forEach(r =>
     lote.push({aba:'REGRAS_COMISSAO', registro: Object.assign({}, r, {SUBCLASSE:nome})}));
   (DB.LANCAMENTOS||[]).filter(l => l.SUBCLASSE === antigo).forEach(l =>
     lote.push({aba:'LANCAMENTOS', registro: Object.assign({}, l, {SUBCLASSE:nome})}));
+  (DB.CONTAS_PAGAR||[]).filter(c => c.CATEGORIA === antigo).forEach(c =>
+    lote.push({aba:'CONTAS_PAGAR', registro: Object.assign({}, c, {CATEGORIA:nome})}));
+  (DB.CONTAS_RECEBER||[]).filter(c => c.CATEGORIA === antigo).forEach(c =>
+    lote.push({aba:'CONTAS_RECEBER', registro: Object.assign({}, c, {CATEGORIA:nome})}));
   carregandoOn('Salvando…');
-  try{ await salvarLote(lote); abrirConfig('subclasses'); render(); toast('Subclasse atualizada.','ok'); }
+  try{ await salvarLote(lote); abrirConfig('subclasses'); render(); toast('Categoria atualizada.','ok'); }
   catch(e){ toast(e.message,'erro'); } finally{ carregandoOff(); }
 }
 
@@ -760,18 +805,18 @@ function cfgRegras(){
     '<tr><td>'+esc(r.SUBCLASSE)+'</td><td><b>'+esc(nomeComissionado(r.COMISSIONADO_ID))+'</b></td>'
     + '<td class="num">'+nMoeda(r.PCT)+'%</td>'
     + '<td style="text-align:right"><button class="btn sm per" onclick="apagarReg(\'REGRAS_COMISSAO\',\''+r.ID+'\',\'esta regra\',\'regras\')">Excluir</button></td></tr>').join('')
-    : '<tr><td colspan="4" class="vazio">Sem regras. Sem regra cadastrada para a subclasse, o lançamento não gera comissão automática.</td></tr>';
-  const subs = (DB.SUBCLASSES||[]).map(s => '<option>'+esc(s.NOME)+'</option>').join('');
+    : '<tr><td colspan="4" class="vazio">Sem regras. Sem regra cadastrada para a categoria, o lançamento não gera comissão automática.</td></tr>';
+  const subs = categorias('C').map(nome => '<option>'+esc(nome)+'</option>').join('');
   const coms = (DB.COMISSIONADOS||[]).filter(c => c.ATIVO !== 'NAO').map(c => '<option value="'+c.ID+'">'+esc(c.NOME)+'</option>').join('');
   return '<div class="grade" style="margin-bottom:12px;align-items:end">'
-    + '<div class="campo"><label>Subclasse</label><select id="rgSub">'+subs+'</select></div>'
+    + '<div class="campo"><label>Categoria (crédito)</label><select id="rgSub">'+subs+'</select></div>'
     + '<div class="campo"><label>Comissionado</label><select id="rgCom">'+coms+'</select></div>'
     + '<div class="campo"><label>% sobre o valor do escritório</label><input id="rgPct" type="number" step="0.01" value="5"></div>'
     + '<div><button class="btn" onclick="addRegra()">Adicionar regra</button></div></div>'
-    + tabelaSimples([{t:'Subclasse'},{t:'Comissionado'},{t:'%',num:1},{t:''}], linhas);
+    + tabelaSimples([{t:'Categoria'},{t:'Comissionado'},{t:'%',num:1},{t:''}], linhas);
 }
 async function addRegra(){
-  if (!val('rgSub') || !val('rgCom')) return toast('Cadastre subclasses e comissionados primeiro.','erro');
+  if (!val('rgSub') || !val('rgCom')) return toast('Cadastre categorias de crédito e comissionados primeiro.','erro');
   await salvar('REGRAS_COMISSAO', {ID:'', SUBCLASSE:val('rgSub'), COMISSIONADO_ID:val('rgCom'), PCT:val('rgPct')||'0'});
   abrirConfig('regras');
 }
@@ -845,10 +890,10 @@ function telaLancamentos(){
   return cabec('Lançamentos', 'Acordos, parcelas, rateio cliente/escritório e sucumbência',
       '<button class="btn" onclick="formLanc()">Novo lançamento</button>')
     + '<div class="filtros">' + campoBusca('Pasta, cliente, processo…')
-    + sel('fSub','Subclasse', [['','Todas']].concat((DB.SUBCLASSES||[]).map(s => [s.NOME,s.NOME])), fSub, '', 'onchange="setF(\'fSub\',this.value)"')
+    + sel('fSub','Categoria', [['','Todas']].concat(categorias('C').map(nm => [nm,nm])), fSub, '', 'onchange="setF(\'fSub\',this.value)"')
     + sel('fFil','Filial', [['','Todas']].concat((DB.FILIAIS||[]).map(f => [f.NOME,f.NOME])), fFil, '', 'onchange="setF(\'fFil\',this.value)"')
     + '</div>'
-    + '<div class="card"><div class="tw"><table><thead><tr><th>Pasta / cliente</th><th>Processo / praça</th><th>Subclasse</th>'
+    + '<div class="card"><div class="tw"><table><thead><tr><th>Pasta / cliente</th><th>Processo / praça</th><th>Categoria</th>'
     + '<th class="num">Valor total</th><th class="num">Sucumbência</th><th class="num">Rateio</th><th>Recebido</th><th></th></tr></thead>'
     + '<tbody>'+linhas+'</tbody></table></div></div>';
 }
@@ -861,7 +906,7 @@ function formLanc(id){
                     .sort((a,b) => n(a.NUM) - n(b.NUM))
                     .map(p => ({ID:p.ID, VENCIMENTO:p.VENCIMENTO, VALOR:n(p.VALOR), STATUS:p.STATUS}))
                 : [];
-  const subs = [['','— selecione —']].concat((DB.SUBCLASSES||[]).map(s => [s.NOME, s.NOME]));
+  const subs = opcoesCategorias('C', l.SUBCLASSE, '— selecione —');
   const fils = [['','— selecione —']].concat((DB.FILIAIS||[]).filter(f => f.ATIVO !== 'NAO').map(f => [f.NOME, f.NOME]));
   const prcs = [['','— selecione —']].concat((DB.PRACAS||[]).filter(f => f.ATIVO !== 'NAO')
                  .map(f => [f.NOME, f.NOME + (f.UF ? ' / ' + f.UF : '')]));
@@ -872,7 +917,7 @@ function formLanc(id){
   const faltando = [];
   if (!(DB.PRACAS||[]).length) faltando.push('praças');
   if (!(DB.FILIAIS||[]).length) faltando.push('filiais');
-  if (!(DB.SUBCLASSES||[]).length) faltando.push('subclasses');
+  if (!categorias('C').length) faltando.push('categorias de crédito');
   const aviso = faltando.length
     ? '<div class="erro" style="margin-bottom:14px">Ainda não há '+faltando.join(', ')+' no cadastro. '
       + '<button class="btn sm sec" onclick="abrirConfig(\''+(faltando[0]==='praças'?'pracas':faltando[0]==='filiais'?'filiais':'subclasses')+'\')">Abrir cadastro</button></div>'
@@ -886,7 +931,7 @@ function formLanc(id){
     + inp('lcProc','Nº do processo', l.N_PROCESSO)
     + sel('lcPraca','Praça', prcs, l.PRACA)
     + sel('lcFilial','Filial', fils, l.FILIAL)
-    + sel('lcSub','Subclasse', subs, l.SUBCLASSE)
+    + sel('lcSub','Categoria', subs, l.SUBCLASSE)
     + '<div class="check"><input type="checkbox" id="lcExez"'+(l.EXEZ==='SIM'?' checked':'')+'><label for="lcExez">Cálculo feito pela EXEZ</label></div>'
 
     + '<div class="secao-form">Valores e rateio</div>'
@@ -1299,7 +1344,7 @@ function listaConciliados(L){
     + '</div>';
   if (!F.length) return filtros + '<div class="card">'
     + vazio('Nada conciliado neste filtro','Ajuste as datas, o valor ou a busca — ou confirme os vínculos na aba de pendentes.')+'</div>';
-  return filtros + '<div class="card"><div class="tw"><table>'
+  return filtros + '<div class="card"><div class="tw"><table class="densa">'
     + '<thead><tr><th>Data</th><th>Identificação</th><th class="num">Valor</th><th>Baixou</th>'
     + '<th class="num">Cliente</th><th class="num">Escritório</th><th></th></tr></thead><tbody>'
     + F.map(m => { const a = alvoDe(m);
@@ -1496,7 +1541,6 @@ function formNovoNaConciliacao(movId){
   const m = (DB.EXTRATO||[]).find(x => x.ID === movId); if (!m) return;
   const deb = ehDebito(m);
   const valor = nMoeda(Math.abs(n(m.VALOR)));
-  const catsR = ['Honorários','Consultoria','Reembolso','Outras receitas'];
   const corpo = '<p class="mini" style="margin-bottom:14px">Movimento de <b>'+moeda(m.VALOR)+'</b> em '+dataBR(m.DATA)
       + (m.BANCO ? ' · '+esc(m.BANCO) : '') + ' — '+esc(m.IDENTIFICACAO||'')+'</p>'
     + '<div class="grade">'
@@ -1507,7 +1551,7 @@ function formNovoNaConciliacao(movId){
           + '<button class="btn sec" style="padding:8px 12px" title="Adicionar aos favorecidos" onclick="addFavorecidoRapido(\'ncQuem\')">+</button></div>'
           + '<datalist id="dlFav">'+optsFavorecidos()+'</datalist></div>'
         : inp('ncQuem','Cliente', ''))
-    + sel('ncCat','Categoria', deb ? CATEGORIAS_CP : catsR, deb ? 'Outras despesas' : 'Honorários')
+    + sel('ncCat','Categoria', opcoesCategorias(deb ? 'D' : 'C', '', '— selecione —'), '')
     + inp('ncVenc', deb ? 'Vencimento' : 'Previsão', m.DATA, '', 'date')
     + inp('ncValor','Valor (R$)', valor)
     + '<div class="campo full"><label for="ncObs">Observações</label><textarea id="ncObs" rows="2"></textarea></div>'
@@ -1790,7 +1834,8 @@ function formCR(id){
   if (c.STATUS === 'Recebido') return toast('Esta conta já foi recebida. Desfaça a conciliação para alterá-la.','erro');
   modal(id ? 'Editar conta a receber' : 'Nova conta a receber',
     '<div class="grade">' + inp('crDesc','Descrição', c.DESCRICAO, 'full') + inp('crCliente','Cliente', c.CLIENTE)
-    + inp('crCat','Categoria', c.CATEGORIA || 'Honorários') + inp('crVenc','Vencimento', c.VENCIMENTO || hoje(),'','date')
+    + sel('crCat','Categoria (crédito)', opcoesCategorias('C', c.CATEGORIA, '— selecione —'), c.CATEGORIA)
+    + inp('crVenc','Vencimento', c.VENCIMENTO || hoje(),'','date')
     + inp('crValor','Valor (R$)', c.VALOR ? nMoeda(c.VALOR) : '') + '</div>'
     + '<p class="mini" style="margin-top:8px">O recebimento é dado como baixado apenas quando o crédito for conciliado no extrato.</p>',
     '<button class="btn sec" onclick="fecharModal()">Cancelar</button><button class="btn" onclick="gravarCR(\''+(id||'')+'\')">Salvar</button>','estreita');
@@ -1879,6 +1924,26 @@ function selo(c){
 }
 /* conta recorrente ainda sem boleto: valor em branco */
 const semValorCP = c => c.STATUS !== 'Pago' && !n(c.VALOR);
+function filtraLib(c, f){
+  if (!f) return true;
+  if (f === 'sem') return semValorCP(c);
+  const t = liberacao(c).tipo;
+  return f === 'nao' ? t === 'nao' : t !== 'nao';
+}
+/* botões de recebido / não recebido / todos, com a contagem de cada um */
+function botoesLib(base){
+  const f = FILTROS.fLib || '';
+  const op = [
+    ['',    'Todos',            base.length],
+    ['ok',  '✓ Recebidos',      base.filter(c => filtraLib(c,'ok')).length],
+    ['nao', '✕ Não recebidos',  base.filter(c => filtraLib(c,'nao')).length],
+    ['sem', 'Sem boleto',       base.filter(c => filtraLib(c,'sem')).length]
+  ];
+  return '<div class="seg" role="group" aria-label="Filtrar por recebimento">'
+    + op.map(([k,rot,qtd]) => '<button class="'+(f===k?'on':'')+' k'+(k||'todos')+'" onclick="setF(\'fLib\',\''+k+'\')">'
+        + esc(rot) + '<span>'+qtd+'</span></button>').join('')
+    + '</div>';
+}
 function origemCP(c){
   const partes = [];
   if (c.ORIGEM && c.ORIGEM !== 'Manual') partes.push(c.ORIGEM);
@@ -1891,13 +1956,11 @@ function telaPagar(){
   const t = FILTROS.busca, mes = FILTROS.fMesP || '';
   const hj = hoje();
   // contas pagas saem daqui e vão para a aba Contas pagas
-  const L = (DB.CONTAS_PAGAR||[])
+  const base = (DB.CONTAS_PAGAR||[])
     .filter(c => c.STATUS !== 'Pago')
     .filter(c => casa(c, ['DESCRICAO','FAVORECIDO','CATEGORIA'], t))
-    .filter(c => !mes || mesDe(c.VENCIMENTO) === mes)
-    .filter(c => !FILTROS.fLib
-      || (FILTROS.fLib === 'sem' ? semValorCP(c)
-      : FILTROS.fLib === 'nao' ? liberacao(c).tipo === 'nao' : liberacao(c).tipo !== 'nao'))
+    .filter(c => !mes || mesDe(c.VENCIMENTO) === mes);
+  const L = base.filter(c => filtraLib(c, FILTROS.fLib))
     .sort((a,b) => String(a.VENCIMENTO).localeCompare(String(b.VENCIMENTO)));
   const abertas = L;
   const atraso = abertas.filter(c => c.VENCIMENTO < hj && liberacao(c).tipo !== 'nao');
@@ -1916,7 +1979,7 @@ function telaPagar(){
     + kpi('Boletos não recebidos', semBoleto.length, 'contas recorrentes ainda sem valor', semBoleto.length ? 'b' : '')
     + '</div>'
     + '<div class="filtros">' + campoBusca('Descrição, favorecido…') + selMes('fMesP', mes)
-    + sel('fLib','Liberação',[['','Todas'],['ok','Liberadas ✓'],['nao','Aguardando ✕'],['sem','Sem boleto']], FILTROS.fLib||'','','onchange="setF(\'fLib\',this.value)"') + '</div>'
+    + '</div>' + botoesLib(base)
     + '<div class="card"><div class="tw"><table><thead><tr><th style="text-align:center">Recebido</th><th>Vencimento</th><th>Descrição</th><th>Favorecido</th>'
     + '<th>Categoria</th><th class="num">Valor</th><th></th></tr></thead><tbody>'
     + (L.length ? L.map(c => '<tr'+(c.VENCIMENTO<hj && liberacao(c).tipo!=='nao' ? ' class="grifo"' : '')+'>'
@@ -1942,7 +2005,7 @@ function formCP(id){
       + '<input id="cpFav" list="dlFav" autocomplete="off" value="'+esc(c.FAVORECIDO||'')+'" placeholder="digite para buscar" oninput="favEscolhido()" style="flex:1;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r)">'
       + '<button class="btn sec" style="padding:8px 12px" title="Adicionar aos favorecidos" onclick="addFavorecidoRapido(\'cpFav\')">+</button></div>'
       + '<datalist id="dlFav">'+optsFavorecidos()+'</datalist></div>'
-    + sel('cpCat','Categoria', CATEGORIAS_CP, c.CATEGORIA || 'Outras despesas')
+    + sel('cpCat','Categoria (débito)', opcoesCategorias('D', c.CATEGORIA, '— selecione —'), c.CATEGORIA)
     + inp('cpVenc','Vencimento', c.VENCIMENTO || hoje(), '', 'date')
     + inp('cpValor','Valor (R$)', c.VALOR ? nMoeda(c.VALOR) : '')
     + '<div class="campo full"><label for="cpObs">Observações</label><textarea id="cpObs" rows="2">'+esc(c.OBS||'')+'</textarea></div>'
@@ -2048,7 +2111,7 @@ function telaComissoes(){
     porCom[c.COMISSIONADO_ID].t += n(c.VALOR);
     if (c.STATUS !== 'Paga') porCom[c.COMISSIONADO_ID].ab += n(c.VALOR); });
 
-  const cabecalho = '<tr><th>Crédito</th><th>Pasta / cliente</th><th>Subclasse</th>'
+  const cabecalho = '<tr><th>Crédito</th><th>Pasta / cliente</th><th>Categoria</th>'
     + '<th class="num">Caiu na conta</th><th class="num">Para o escritório</th><th class="num">Base da comissão</th>'
     + coms.map(c => '<th class="num">'+esc(c.NOME)+'</th>').join('') + '</tr>';
 
@@ -2060,7 +2123,7 @@ function telaComissoes(){
         return '<td class="num">' + (it ? nMoeda(it.VALOR) + '<div class="mini">' + nMoeda(it.PCT) + '%'
           + (it.STATUS === 'Paga' ? ' · paga' : '') + '</div>' : '<span class="mini">—</span>') + '</td>'; }).join('')
     + '</tr>').join('')
-    : '<tr><td colspan="'+(6+coms.length)+'">'+vazio('Sem comissões no período','As comissões são geradas na conciliação, conforme as regras por subclasse.')+'</td></tr>';
+    : '<tr><td colspan="'+(6+coms.length)+'">'+vazio('Sem comissões no período','As comissões são geradas na conciliação, conforme as regras por categoria.')+'</td></tr>';
 
   const rodape = recs.length ? '<tfoot><tr><th colspan="3" style="text-align:right">Totais</th>'
     + '<th class="num">'+nMoeda(recs.reduce((s,r)=>s+r.caiu,0))+'</th>'
@@ -2072,7 +2135,7 @@ function telaComissoes(){
   const aPagar = todas.filter(c => c.STATUS !== 'Paga');
   return cabec('Comissões', 'Base de cálculo: a parte do escritório sem a tarifa bancária.',
       '<button class="btn sec" onclick="abrirConfig(\'comissionados\')">Comissionados</button>'
-    + '<button class="btn sec" onclick="abrirConfig(\'regras\')">Regras por subclasse</button>'
+    + '<button class="btn sec" onclick="abrirConfig(\'regras\')">Regras por categoria</button>'
     + (aPagar.length ? '<button class="btn" onclick="gerarCPComissoes()">Enviar '+aPagar.length+' para contas a pagar</button>' : ''))
     + '<div class="kpis">'
     + coms.slice(0,4).map(c => kpi(c.NOME, moeda((porCom[c.ID]||{}).t || 0), moeda((porCom[c.ID]||{}).ab || 0) + ' em aberto', 'b')).join('')
@@ -2294,7 +2357,7 @@ function telaContaCorrente(){
     + '<div class="campo"><label for="ccMax">Valor até</label><input id="ccMax" value="'+esc(FILTROS.ccMax||'')+'" placeholder="0,00" onchange="setF(\'ccMax\',this.value)"></div>'
     + sel('ccTipo','Tipo', [['','Tudo'],['C','Entradas'],['D','Saídas']], FILTROS.ccTipo||'', '', 'onchange="setF(\'ccTipo\',this.value)"')
     + '</div>'
-    + '<div class="card"><div class="tw"><table><thead><tr><th>Data</th><th>Histórico</th><th>Baixou</th>'
+    + '<div class="card"><div class="tw"><table class="densa"><thead><tr><th>Data</th><th>Histórico</th><th>Baixou</th>'
     + '<th>Conta</th><th class="num">Entrada</th><th class="num">Saída</th><th class="num">Saldo acumulado</th><th></th></tr></thead><tbody>'
     + (vis.length ? vis.map(r => {
         const v = n(r.m.VALOR), d = ehDebito(r.m);
